@@ -119,7 +119,7 @@ public sealed class Plugin : BaseUnityPlugin
         WingmanSessionTransport.EnsureTemplate();
         enable = Config.Bind("General", "Enable", true, "");
         combatEnable =
-            Config.Bind("Combat", "Enable", false, "Enable designated-target A2A and autonomous missile defense.");
+            Config.Bind("Combat", "Enable", true, "Enable designated-target A2A and autonomous missile defense.");
         enableWingmanStatusMessages = Config.Bind("Messages", "EnableWingmanStatusMessages", true,
                                                   "Show local wingman status messages in the gameplay HUD.");
         previousKey = Config.Bind("Input", "PreviousAircraftKey", new KeyboardShortcut(KeyCode.F10), "");

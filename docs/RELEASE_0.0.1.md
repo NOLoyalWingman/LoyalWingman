@@ -12,7 +12,7 @@ To uninstall, remove `LoyalWingman.dll` from that folder.
 
 - FQ-106 cradle release, follow/loiter, recovery, and map controls.
 - Per-wingman air-to-air, SEAD, anti-ship, CAS, and strike mission controls.
-- Built-in aircraft switching. Combat is disabled by default and must be enabled in the plugin configuration before use.
+- Built-in aircraft switching. Plugin features, status messages, and combat are enabled by default; combat can be disabled in the plugin configuration.
 
 ## Known limitations
 

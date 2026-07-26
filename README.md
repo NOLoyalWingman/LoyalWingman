@@ -20,11 +20,11 @@ No ZIP extraction or PDB is required. To uninstall, remove that DLL (and the emp
 
 The ordinary Cargo Bay cradle provides four FQ rounds per physical cradle. Loyal Wingman manages release, roster entries, follow/loiter behavior, recovery, physical cradle/round loadouts, and map commands for supported FQ workflows. The built-in aircraft switch backend is self-contained. Provider-owned drone-carrier ports may integrate through their provider contract; this Preview does not claim complete port, CLX, multi-port, or extended combat-matrix support.
 
-Combat is disabled by default. Enable it before starting the game in `BepInEx\config\discord9.loyalwingman.cfg`:
+The plugin, HUD status messages, and combat features are enabled by default. Combat can be disabled in `BepInEx\config\discord9.loyalwingman.cfg` if a non-combat wingman workflow is preferred:
 
 ```ini
 [Combat]
-Enable = true
+Enable = false
 ```
 
 Core controls include Space for the selected native cradle round, F10/F11 for switching among available aircraft, F8 for single-wingman air-to-air assignment, and the Loyal Wingman map page for selection, follow/loiter, recovery, and mission commands. F5 selects the roster on the map page. See the in-game map controls and logs when testing a Preview build.
@@ -68,4 +68,6 @@ Include both logs when reporting an issue:
 - [MIT License](LICENSE)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-Portions of the self-contained switch implementation are derived from BOTE v1.4.1; see the third-party notice for attribution and license terms.
+## Credits
+
+Portions of the self-contained aircraft-switching implementation are derived from BOTE v1.4.1 by MinecrackTyler and are used under the MIT License. Loyal Wingman contains its own modified implementation and does not bundle or require the BOTE binary. See [Third-party notices](THIRD_PARTY_NOTICES.md) for the complete attribution and license text.

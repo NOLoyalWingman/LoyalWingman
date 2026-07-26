@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 - Loyal Wingman FQ-106 cradle release, follow/loiter, recovery, and map command functionality.
 - Per-wingman combat mission controls, including air-to-air, SEAD, anti-ship, CAS, and strike logic.
 
+### Changed
+
+- Plugin features, HUD status messages, and combat now default to enabled.
+
 ### Removed
 
 - The Tarantula / QuadVTOL1 Slingload Hook prototype port option. Provider-owned ports remain supported; the ordinary Cargo Bay four-round FQ cradle is unchanged.
