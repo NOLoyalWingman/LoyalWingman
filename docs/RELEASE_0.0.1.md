@@ -1,6 +1,6 @@
-# Loyal Wingman 0.0.1 Preview
+# Loyal Wingman 0.0.1
 
-Loyal Wingman is a preview plugin targeting Nuclear Option 0.33.
+Loyal Wingman 0.0.1 is the initial stable release for Nuclear Option 0.33. Maintainer runtime acceptance has been completed.
 
 ## Install
 
@@ -8,7 +8,7 @@ Install BepInEx 5, Blueprinter (`com.nikkorap.blueprinter`, minimum 1.8.21), and
 
 To uninstall, remove `LoyalWingman.dll` from that folder.
 
-## Preview features
+## Features
 
 - FQ-106 cradle release, follow/loiter, recovery, and map controls.
 - Per-wingman air-to-air, SEAD, anti-ship, CAS, and strike mission controls.
@@ -16,7 +16,7 @@ To uninstall, remove `LoyalWingman.dll` from that folder.
 
 ## Known limitations
 
-This is an SP-first preview. Dedicated multiplayer is not accepted, and extended CLX, multi-port, and combat runtime matrices remain pending. Do not infer complete runtime support from this preview.
+This release is SP-first. Dedicated multiplayer is not accepted, and extended CLX, provider, multi-port, and combat runtime matrices remain limited. Do not infer complete runtime support from the supported ordinary Cargo Bay workflow.
 
 ## Support and checksums
 

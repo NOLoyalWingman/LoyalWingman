@@ -2,9 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.1] - Unreleased
-
-**Preview release.**
+## [0.0.1] - 2026-07-27
 
 ### Added
 
@@ -21,4 +19,4 @@ All notable changes to this project will be documented in this file.
 
 ### Notes
 
-- This is a preview build. Broader runtime acceptance, including dedicated multiplayer and extended multi-cradle coverage, remains in progress.
+- Dedicated multiplayer is not accepted. Extended multi-cradle and combat runtime coverage remains limited.

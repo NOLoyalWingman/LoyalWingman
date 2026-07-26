@@ -1,4 +1,4 @@
-# Loyal Wingman 0.0.1 Preview install card
+# Loyal Wingman 0.0.1 install card
 
 ## Requirements
 
@@ -17,8 +17,8 @@
 
 To uninstall, remove `Nuclear Option\BepInEx\plugins\LoyalWingman\LoyalWingman.dll` (and the now-empty folder if desired).
 
-## Preview scope
+## Supported scope
 
-This is an SP-first preview for Tarantula/FQ-106 workflows. Full dedicated multiplayer acceptance and extended CLX, multi-port, and combat runtime matrices remain pending.
+This stable release is SP-first for the ordinary Cargo Bay FQ-106 workflow. Dedicated multiplayer is not accepted, and extended CLX, provider, multi-port, and combat runtime matrices remain limited.
 
 For support, include the complete `BepInEx\LogOutput.log` and `%USERPROFILE%\AppData\LocalLow\Shockfront\NuclearOption\Player.log`.
