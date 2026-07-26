@@ -1,6 +1,6 @@
 # NOMNOM submission: Loyal Wingman 0.0.1
 
-This is the first public-release checklist and manifest for `modManifests/LoyalWingman.json`. The release asset and digest are fixed; the remaining step is submitting the manifest to NOMNOM.
+This is the first public-release checklist and manifest for `modManifests/LoyalWingman.json`. The manifest was submitted in [NOMNOM PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220) and is awaiting upstream review.
 
 ## Checklist
 
@@ -8,7 +8,7 @@ This is the first public-release checklist and manifest for `modManifests/LoyalW
 - [x] Create the parseable tag `v0.0.1` and a public GitHub Release.
 - [x] Upload exactly `LoyalWingman.dll` as the first GitHub Release asset (no ZIP or PDB).
 - [x] Record the GitHub release-asset digest.
-- [ ] Submit the completed manifest through a PR to `KopterBuzz/NOMNOM`.
+- [x] Submit the completed manifest through [PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220).
 
 `NOComponentsWIP` is neither a current runtime dependency nor registered in NOMNOM, so it must not be declared in `dependencies`.
 
@@ -55,4 +55,4 @@ This is the first public-release checklist and manifest for `modManifests/LoyalW
 }
 ```
 
-The GitHub Release is public and its tag is parseable as `v0.0.1`.
+The GitHub Release is public and its tag is parseable as `v0.0.1`. Registry submission is tracked in [PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220).
