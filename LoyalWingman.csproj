@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyName>LoyalWingman</AssemblyName>
+    <RootNamespace>LoyalWingman</RootNamespace>
+    <GameDir Condition="'$(GameDir)' == '' and '$(NUCLEAR_OPTION_DIR)' != ''">$(NUCLEAR_OPTION_DIR)</GameDir>
+    <PluginOutputDir>$(GameDir)\BepInEx\plugins\LoyalWingman</PluginOutputDir>
+    <ManagedDir>$(GameDir)\NuclearOption_Data\Managed</ManagedDir>
+  </PropertyGroup>
+  <Target Name="ValidateGameDir" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(GameDir)' == ''" Text="GameDir is required. Supply -p:GameDir=&lt;Nuclear Option directory&gt; or set NUCLEAR_OPTION_DIR." />
+    <Error Condition="!Exists('$(GameDir)\NuclearOption_Data\Managed\Assembly-CSharp.dll')" Text="GameDir does not contain Nuclear Option managed assemblies: $(GameDir)" />
+  </Target>
+  <ItemGroup>
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.3" PrivateAssets="all" />
+    <Reference Include="Assembly-CSharp" HintPath="$(GameDir)\NuclearOption_Data\Managed\Assembly-CSharp.dll" Private="false" Publicize="true" />
+    <Reference Include="Mirage" HintPath="$(GameDir)\NuclearOption_Data\Managed\Mirage.dll" Private="false" />
+    <Reference Include="Rewired_Core" HintPath="$(GameDir)\NuclearOption_Data\Managed\Rewired_Core.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(GameDir)\NuclearOption_Data\Managed\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(GameDir)\NuclearOption_Data\Managed\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(GameDir)\NuclearOption_Data\Managed\UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UIModule" HintPath="$(GameDir)\NuclearOption_Data\Managed\UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.UI" HintPath="$(GameDir)\NuclearOption_Data\Managed\UnityEngine.UI.dll" Private="false" />
+    <Reference Include="Unity.TextMeshPro" HintPath="$(ManagedDir)\Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="BepInEx" HintPath="$(GameDir)\BepInEx\core\BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(GameDir)\BepInEx\core\0Harmony.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="DeployPlugin" AfterTargets="Build" Condition="'$(Deploy)' == 'true'">
+    <MakeDir Directories="$(PluginOutputDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PluginOutputDir)" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pdb" DestinationFolder="$(PluginOutputDir)" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+  </Target>
+</Project>

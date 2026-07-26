@@ -1,0 +1,1249 @@
+using System;
+using System.Numerics;
+using LoyalWingman;
+
+internal static class Program
+{
+    private static int tests;
+
+    private static void Main()
+    {
+        Equal(true, MissileDefenseLogic.ShouldEnter(null, "missile-a"), "null current enters");
+        Equal(false, MissileDefenseLogic.ShouldEnter("missile-a", "missile-a"), "same threat keeps current");
+        Equal(true, MissileDefenseLogic.ShouldEnter("missile-a", "missile-b"), "different threat enters");
+        Equal(MissileDefensePhase.Maneuver, MissileDefenseLogic.AdvancePhase(MissileDefensePhase.Maneuver, 5f),
+              "maneuver holds at five seconds");
+        Equal(MissileDefensePhase.TerminalAcquire,
+              MissileDefenseLogic.AdvancePhase(MissileDefensePhase.Maneuver, 4.9f), "maneuver enters terminal");
+        Equal(MissileDefensePhase.FireAttempt,
+              MissileDefenseLogic.AdvancePhase(MissileDefensePhase.TerminalAcquire, 1.6f),
+              "terminal fires immediately");
+        Equal(MissileDefensePhase.FireAttempt,
+              MissileDefenseLogic.AdvancePhase(MissileDefensePhase.TerminalAcquire, 1.5f),
+              "terminal forced fire");
+        Equal(true, CombatCommandLogic.MatchesTarget("target-a", "target-a"), "a2a matching target");
+        Equal(false, CombatCommandLogic.MatchesTarget("target-a", "target-b"), "a2a nonmatching target");
+        Equal(false, CombatCommandLogic.MatchesTarget(null, "target-a"), "a2a null assigned target is safe");
+        Equal(false, CombatCommandLogic.MatchesTarget("", "target-a"), "a2a empty assigned target is safe");
+        Equal(false, CombatCommandLogic.MatchesTarget("target-a", null!), "a2a null target ID is safe");
+        Equal(false, CombatCommandLogic.MatchesTarget("target-a", ""), "a2a empty target ID is safe");
+        Equal(false, CombatCommandLogic.MatchesTarget("target-y", "target-x"),
+              "a2a invalidating X retains conceptual Record Y");
+        Equal(false, CombatCommandLogic.IsSingleTargetProjection(System.Array.Empty<string?>(), out string? projectedEmpty),
+              "a2a projection rejects empty");
+        Equal<string?>(null, projectedEmpty, "a2a empty projection has no target");
+        Equal(true, CombatCommandLogic.IsSingleTargetProjection(new string?[] { "target-a" }, out string? projectedSingle),
+              "a2a projection accepts single target");
+        Equal("target-a", projectedSingle, "a2a single projection retains target");
+        Equal(true, CombatCommandLogic.IsSingleTargetProjection(new string?[] { "target-a", "target-a" }, out string? projectedRepeated),
+              "a2a projection accepts duplicate target IDs across conceptual Records");
+        Equal("target-a", projectedRepeated, "a2a repeated projection retains common target");
+        Equal(false, CombatCommandLogic.IsSingleTargetProjection(new string?[] { "target-a", "target-b" }, out string? projectedDifferent),
+              "a2a projection rejects different target IDs");
+        Equal<string?>(null, projectedDifferent, "a2a different projection has no target");
+        Equal(false, CombatCommandLogic.IsSingleTargetProjection(new string?[] { "target-a", null }, out string? projectedMissing),
+              "a2a projection rejects null missing target ID");
+        Equal<string?>(null, projectedMissing, "a2a missing projection has no target");
+        Equal(true, CombatCommandLogic.IsBetterOpportunity(0.8f, 2, 0.4f, 1), "higher opportunity wins");
+        Equal(false, CombatCommandLogic.IsBetterOpportunity(0.2f, 0, 0.4f, 1), "lower opportunity loses");
+        Equal(true, CombatCommandLogic.IsBetterOpportunity(0.4f, 0, 0.4f, 1), "lower station index breaks tie");
+        Equal(true, CombatCommandLogic.IsSupportedSeeker(true, false, false), "a2a accepts ir seeker");
+        Equal(true, CombatCommandLogic.IsSupportedSeeker(false, true, false), "a2a accepts arh seeker");
+        Equal(true, CombatCommandLogic.IsSupportedSeeker(true, false, true), "ir-only accepts ir seeker");
+        Equal(false, CombatCommandLogic.IsSupportedSeeker(false, true, true), "ir-only rejects arh seeker");
+        Equal(false, CombatCommandLogic.IsSupportedSeeker(false, false, false), "no seeker is rejected");
+        Equal(true, CombatCommandLogic.IsAirToAirStation(true, true, false), "a2a station accepts missile with ir seeker");
+        Equal(true, CombatCommandLogic.IsAirToAirStation(true, false, true), "a2a station accepts missile with arh seeker");
+        Equal(false, CombatCommandLogic.IsAirToAirStation(true, false, false), "a2a station rejects missile without ir or arh seeker");
+        Equal(false, CombatCommandLogic.IsAirToAirStation(false, true, false), "a2a station rejects non-missile with seeker");
+        Equal(false, CombatCommandLogic.IsAirToAirStation(true, false, false), "a2a station rejects asuw or optical-only missile");
+        Equal(true, CombatCommandLogic.UsesAirToAirWeapons(WingmanMission.AirToAir), "explicit a2a uses aam stations");
+        Equal(true, CombatCommandLogic.UsesAirToAirWeapons(WingmanMission.Cap), "cap uses aam stations");
+        Equal(false, CombatCommandLogic.UsesAirToAirWeapons(WingmanMission.AntiShip), "asuw remains separate from aam stations");
+        Equal(WingmanDesired.Follow,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Auto, true),
+              "auto follows global follow");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Auto, false),
+              "auto follows global loiter");
+        Equal(WingmanDesired.Follow,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Follow, false),
+              "follow override wins");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Loiter, true),
+              "loiter override wins");
+        Equal(WingmanDesired.AirToAir,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, true, DroneModeOverride.Loiter, false),
+              "assigned combat resolves a2a");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.AirToAir, true, DroneModeOverride.Loiter, true),
+              "combat off returns override");
+        Equal(WingmanDesired.Follow,
+              CombatCommandLogic.ResolveDesired(false, WingmanMission.AirToAir, true, DroneModeOverride.Auto, true),
+              "combat off returns auto");
+        Equal(WingmanDesired.AirToAir,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, true, DroneModeOverride.Auto, true),
+              "combat re-enable resumes a2a intent");
+        Equal(WingmanDesired.Follow,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, false, DroneModeOverride.Auto, true),
+              "missing target falls back to follow");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, false, DroneModeOverride.Auto, false),
+              "missing target falls back to loiter");
+        Equal(WingmanDesired.Sead,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.Sead, true, DroneModeOverride.Auto, true),
+              "sead resolves explicitly");
+        Equal(WingmanDesired.AntiShip,
+              CombatCommandLogic.ResolveDesired(true, WingmanMission.AntiShip, true, DroneModeOverride.Auto, true),
+              "anti-ship resolves explicitly");
+        Equal(WingmanDesired.AirToAir,
+               CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, true, DroneModeOverride.Auto, false),
+               "missile defense resume retains mission intent");
+        Equal(false, CombatCommandLogic.TryGetCommonMission(System.Array.Empty<WingmanMission>(), out _),
+              "clear target rejects empty selection");
+        Equal(false, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.None }, out _),
+              "clear target rejects none mission");
+        Equal(true, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.AirToAir }, out WingmanMission commonA2a),
+              "clear target accepts single a2a mission");
+        Equal(WingmanMission.AirToAir, commonA2a, "single a2a common mission");
+        Equal(true, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.Sead, WingmanMission.Sead },
+                                                            out WingmanMission commonSead),
+              "clear target accepts shared sead mission");
+        Equal(WingmanMission.Sead, commonSead, "shared sead common mission");
+        Equal(true, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.AntiShip, WingmanMission.AntiShip },
+                                                            out WingmanMission commonAntiShip),
+              "clear target accepts shared anti-ship mission");
+        Equal(WingmanMission.AntiShip, commonAntiShip, "shared anti-ship common mission");
+        Equal(false, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.AirToAir, WingmanMission.Sead }, out _),
+              "clear target rejects mixed missions");
+        Equal(false, CombatCommandLogic.TryGetCommonMission(new[] { WingmanMission.Sead, WingmanMission.None }, out _),
+              "clear target rejects selection containing none");
+        WingmanLoadoutPlan fq1 = WingmanLoadoutLogic.PlanForPhysicalRound(0);
+        Equal(false, fq1.UsesCustomLoadout, "fq1 uses native default loadout");
+        Equal(false, WingmanLoadoutLogic.PlanForPhysicalRound(1).UsesCustomLoadout, "fq2 uses native default loadout");
+        WingmanLoadoutPlan fq3 = WingmanLoadoutLogic.PlanForPhysicalRound(2);
+        Equal("FQ3", fq3.role, "fq3 role");
+        Equal("ARM1_single", fq3.mountKey, "fq3 arm mount");
+        WingmanLoadoutPlan fq4 = WingmanLoadoutLogic.PlanForPhysicalRound(3);
+        Equal("FQ4", fq4.role, "fq4 role");
+        Equal("AShM1_single", fq4.mountKey, "fq4 anti-ship mount");
+        Equal(false, WingmanLoadoutLogic.PlanForPhysicalRound(0).UsesCustomLoadout, "physical round zero repeats default");
+        Equal(false, WingmanLoadoutLogic.PlanForPhysicalRound(1).UsesCustomLoadout, "physical round one repeats default");
+        Equal("FQ3", WingmanLoadoutLogic.PlanForPhysicalRound(2).role, "fq3 role repeats across cradles");
+        Equal("AShM1_single", WingmanLoadoutLogic.PlanForPhysicalRound(3).mountKey, "fq4 role repeats across cradles");
+        var placements = new LogicalPlacementAllocator();
+        var allocatorEvidence = new LogicalPlacementAllocator();
+        Equal(0, allocatorEvidence.Preview().Ordinal, "new allocator starts at zero");
+        Equal(0, allocatorEvidence.Preview().Ordinal, "consecutive preview does not advance");
+        LogicalPlacement rejectedPreview = allocatorEvidence.Preview();
+        Equal(false, allocatorEvidence.TryCommit(new LogicalPlacement(rejectedPreview.Ordinal + 1)), "rejected commit does not advance");
+        Equal(rejectedPreview.Ordinal, allocatorEvidence.Preview().Ordinal, "rejected commit leaves ordinal unchanged");
+        Equal(false, allocatorEvidence.TryCommit(new LogicalPlacement(rejectedPreview.Ordinal - 1)), "stale commit does not advance");
+        Equal(rejectedPreview.Ordinal, allocatorEvidence.Preview().Ordinal, "stale commit leaves ordinal unchanged");
+        Equal(true, allocatorEvidence.TryCommit(rejectedPreview), "successful commit advances once");
+        Equal(1, allocatorEvidence.Preview().Ordinal, "successful commit advances next ordinal once");
+        for (int ordinal = 0; ordinal < 5; ordinal++)
+        {
+            LogicalPlacement preview = placements.Preview();
+            Equal(ordinal, preview.Ordinal, "placement ordinal");
+            Equal(ordinal / 4, preview.GroupId, "placement group");
+            Equal(ordinal % 4, preview.GroupSlot, "placement slot");
+            Equal(true, placements.TryCommit(preview), "placement commit");
+        }
+        LogicalPlacement pending = placements.Preview();
+        Equal(5, pending.Ordinal, "preview does not advance");
+        Equal(false, placements.TryCommit(new LogicalPlacement(4)), "stale placement rejects");
+        Equal(5, placements.Preview().Ordinal, "failed commit does not advance");
+        var newSessionPlacements = new LogicalPlacementAllocator();
+        Equal(0, newSessionPlacements.Preview().Ordinal, "new session restarts placement");
+        Equal(FqCradleLoadoutLogic.PhysicalRoundsPerCradle, 4, "physical rounds-per-cradle contract");
+        Equal(WingmanGroupLogic.GroupSize, 4, "logical group size contract");
+        Equal("FQ-01", WingmanGroupLogic.FqPresentationLabel(0), "fq presentation label first ordinal");
+        Equal("FQ-02", WingmanGroupLogic.FqPresentationLabel(1), "fq presentation labels differentiate ordinals");
+        Equal("FQ-100", WingmanGroupLogic.FqPresentationLabel(99), "fq presentation label expands above two digits");
+        Equal(true, CarrierFqLoadoutPlan.TryCreate(2, new string?[] { "default" }, out CarrierFqLoadoutPlan? physicalPlan),
+              "physical cradle plan creates");
+        Equal(true, physicalPlan!.TrySet(1, 3, 0, "role"), "physical cradle round stores independently");
+        Equal(true, physicalPlan.TryGetRow(1, 3, out string?[] physicalRow), "physical cradle round resolves independently");
+        Equal("role", physicalRow[0], "physical plan value remains stable");
+        Equal(1, allocatorEvidence.Preview().Ordinal, "logical allocator advances independently of physical plan");
+        Equal(true, WingmanLoadoutLogic.HasCompleteLoadout(fq3, 4, 4, true, false, out _),
+              "fq3 accepts complete loadout");
+        Equal(false, WingmanLoadoutLogic.HasCompleteLoadout(fq3, 3, 4, true, false, out string countReason),
+              "count mismatch falls back");
+        Equal("count_mismatch", countReason, "count mismatch reason");
+        Equal(false, WingmanLoadoutLogic.HasCompleteLoadout(fq4, 4, 4, false, false, out string missingReason),
+              "missing mount falls back");
+        Equal("mount_missing", missingReason, "missing mount reason");
+        Equal(false, WingmanLoadoutLogic.HasCompleteLoadout(fq4, 4, 4, true, true, out string blockedReason),
+              "blocked mount falls back");
+        Equal("mount_blocked", blockedReason, "blocked mount reason");
+        Equal(true, StrikeMissionLogic.ShouldRetreat(49f, 50f), "retreat inside minimum range");
+        Equal(false, StrikeMissionLogic.ShouldRetreat(50f, 50f), "retreat excludes minimum range boundary");
+        Equal(true, StrikeMissionLogic.ShouldBreakOffAfterShot(99f, 50f), "near shot breakoff inside boundary");
+        Equal(false, StrikeMissionLogic.ShouldBreakOffAfterShot(100f, 50f), "near shot breakoff excludes boundary");
+        Equal(120f, StrikeMissionLogic.RetreatDistance(60f, 50f), "retreat distance uses turning radius branch");
+        Equal(100f, StrikeMissionLogic.RetreatDistance(40f, 50f), "retreat distance uses minimum range branch");
+        Equal(true, StrikeMissionLogic.ShouldExitRetreat(51f, 50f, 100f, 100f),
+              "retreat exits above turning radius with distance boundary held");
+        Equal(false, StrikeMissionLogic.ShouldExitRetreat(50f, 50f, 100f, 100f),
+              "retreat holds at turning radius with distance boundary held");
+        Equal(true, StrikeMissionLogic.ShouldExitRetreat(50f, 50f, 101f, 100f),
+              "retreat exits beyond standoff with vertical boundary held");
+        Equal(false, StrikeMissionLogic.ShouldExitRetreat(50f, 50f, 100f, 100f),
+              "retreat holds at standoff with vertical boundary held");
+        Equal(5f, StrikeMissionLogic.NearShotBreakoffSeconds, "native near shot breakoff constant");
+        Equal(2f, StrikeMissionLogic.CollisionBreakoffSeconds, "native collision breakoff constant");
+        Equal(StrikeWeaponStatus.Missing, StrikeMissionLogic.ResolveWeaponStatus(false, false, false),
+              "missing compatible weapon");
+        Equal(StrikeWeaponStatus.Exhausted, StrikeMissionLogic.ResolveWeaponStatus(true, false, false),
+              "compatible weapon exhausted");
+        Equal(StrikeWeaponStatus.Waiting, StrikeMissionLogic.ResolveWeaponStatus(true, false, true),
+              "reloading weapon waits");
+        Equal(StrikeWeaponStatus.Waiting, StrikeMissionLogic.ResolveWeaponStatus(true, false, true),
+              "salvo weapon waits");
+        Equal(StrikeWeaponStatus.Armed, StrikeMissionLogic.ResolveWeaponStatus(true, true, true),
+              "ammo makes weapon armed despite temporary state");
+        Equal(false, StrikeMissionLogic.ShouldCompleteWeaponCheck(true, StrikeWeaponStatus.Missing),
+              "missing weapon waits through maneuver phase");
+        Equal(false, StrikeMissionLogic.ShouldCompleteWeaponCheck(true, StrikeWeaponStatus.Exhausted),
+              "exhausted weapon waits through maneuver phase");
+        Equal(true, StrikeMissionLogic.ShouldCompleteWeaponCheck(false, StrikeWeaponStatus.Missing),
+              "missing weapon completes at ingress");
+        Equal(true, StrikeMissionLogic.ShouldCompleteWeaponCheck(false, StrikeWeaponStatus.Exhausted),
+              "exhausted weapon completes at ingress");
+        Equal(false, StrikeMissionLogic.ShouldCompleteWeaponCheck(false, StrikeWeaponStatus.Waiting),
+              "waiting weapon permits assignment and holds");
+        Equal(false, StrikeMissionLogic.ShouldCompleteWeaponCheck(false, StrikeWeaponStatus.Armed),
+              "armed weapon permits assignment");
+        Equal(AntiShipWeaponKind.Ashm, StrikeMissionLogic.ResolveAntiShipWeaponKind(true, false, false, false, false),
+              "cruise classifier");
+        Equal(AntiShipWeaponKind.Agm, StrikeMissionLogic.ResolveAntiShipWeaponKind(false, true, true, false, false),
+              "agm classifier");
+        Equal(AntiShipWeaponKind.LaserRocket, StrikeMissionLogic.ResolveAntiShipWeaponKind(false, false, false, true, true),
+              "laser classifier");
+        Equal(AntiShipWeaponKind.None, StrikeMissionLogic.ResolveAntiShipWeaponKind(false, false, false, true, false),
+              "laser flag without seeker rejects");
+        Equal(AntiShipWeaponKind.None, StrikeMissionLogic.ResolveAntiShipWeaponKind(false, false, false, false, true),
+              "laser seeker without flag rejects");
+        Equal(AntiShipWeaponKind.Ashm, StrikeMissionLogic.ResolveAntiShipWeaponKind(true, true, true, false, false),
+              "cruise optical remains a single ashm kind");
+        Equal(AntiShipWeaponKind.None, StrikeMissionLogic.ResolveAntiShipWeaponKind(true, false, false, true, true),
+              "optical and laser conflict rejects");
+        Equal(true, StrikeMissionLogic.CanFireLaserVolley(true, false, 99f, 100f, 9f, 10f), "laser volley gate accepts");
+        Equal(false, StrikeMissionLogic.CanFireLaserVolley(false, false, 99f, 100f, 9f, 10f), "laser gate needs lase");
+        Equal(false, StrikeMissionLogic.CanFireLaserVolley(true, true, 99f, 100f, 9f, 10f), "pending laser blocks volley");
+        Equal(true, StrikeMissionLogic.LaserSupportOwns(true, 0), "pending launch owns laser support");
+        Equal(true, StrikeMissionLogic.LaserSupportOwns(false, 1), "active laser owns support");
+        Equal(false, StrikeMissionLogic.LaserSupportOwns(false, 0), "no pending or active laser releases support");
+        Equal(true, StrikeMissionLogic.CanFireLaserVolley(true, false, 99f, 100f, 9f, 10f), "active laser does not block volley");
+        Equal(false, StrikeMissionLogic.CanFireLaserVolley(true, false, 100f, 100f, 9f, 10f), "laser range boundary");
+        Equal(false, StrikeMissionLogic.CanFireLaserVolley(true, false, 99f, 100f, 10f, 10f), "laser alignment boundary");
+        Equal(false, StrikeMissionLogic.CanFireLaserVolley(true, false, float.NaN, 100f, 9f, 10f), "laser nan rejects");
+        Equal(LaserVolleyDisposition.Wait, StrikeMissionLogic.ResolveLaserVolley(0, true, 0), "empty pending volley waits");
+        Equal(LaserVolleyDisposition.Support, StrikeMissionLogic.ResolveLaserVolley(0, false, 1), "empty volley supports active laser");
+        Equal(LaserVolleyDisposition.Release, StrikeMissionLogic.ResolveLaserVolley(0, false, 0), "empty idle volley releases");
+        Equal(LaserVolleyDisposition.Wait, StrikeMissionLogic.ResolveLaserVolley(1, false, 0), "laser ammo blocks ashm transition");
+        Equal(LaserVolleyDisposition.Wait, StrikeMissionLogic.ResolveLaserVolley(0, true, 1), "pending laser blocks ashm transition");
+        Equal(AntiShipAttackStage.AshmVolley, StrikeMissionLogic.NextAntiShipStage(AntiShipAttackStage.LaserVolley), "registered active laser advances directly to ashm");
+        Equal(true, StrikeMissionLogic.LaserSupportOwns(true, 0), "pending cannot complete laser stage");
+        Equal(true, StrikeMissionLogic.LaserSupportOwns(false, 1), "active laser delays completion after ashm");
+        Equal(LaserVolleyDisposition.Wait, StrikeMissionLogic.ResolveLaserVolley(1, false, 3), "active laser does not block next volley");
+        Equal(LaserVolleyDisposition.Wait, StrikeMissionLogic.ResolveLaserVolley(1, true, 0), "deregistered active cannot release pending volley");
+        Equal(5f, StrikeMissionLogic.AntiShipProfileHeight(20000f), "20 km profile is literal 5 m");
+        Equal(50f, StrikeMissionLogic.AntiShipProfileHeight(20000.001f), "above 20 km profile is literal 50 m");
+        Equal(5f, StrikeMissionLogic.AntiShipProfileHeight(1f), "near profile remains literal 5 m");
+        Equal(50f, StrikeMissionLogic.AntiShipProfileHeight(50000f), "far profile remains literal 50 m");
+        CapTests();
+        SeadTests();
+        CasTests();
+        StrikeBombingTests();
+        MountedDroneLoadoutTests();
+        Equal(12000f, StrikeMissionLogic.AntiShipLaunchRange(12000f), "native range is not outer capped");
+        Equal(true, StrikeMissionLogic.WithinAntiShipEnvelope(10000f, 0f, 12000f, 0f, 1f, 1f, 0f), "native range permits beyond 10 km");
+        Equal(0f, StrikeMissionLogic.AntiShipLaunchRange(0f), "zero native range unusable");
+        Equal(0f, StrikeMissionLogic.AntiShipLaunchRange(float.NaN), "non-finite native range unusable");
+        Equal(0f, StrikeMissionLogic.AntiShipLaunchRange(float.PositiveInfinity), "infinite native range unusable");
+        Equal(false, StrikeMissionLogic.WithinAntiShipEnvelope(1f, 0f, -1f, 0f, 1f, 1f, 0f), "negative native range unusable");
+        Equal(AntiShipAttackStage.LaserVolley, StrikeMissionLogic.NextAntiShipStage(AntiShipAttackStage.AgmVolley), "agm then laser stage");
+        Equal(AntiShipAttackStage.AshmVolley, StrikeMissionLogic.NextAntiShipStage(AntiShipAttackStage.LaserVolley), "laser then ashm stage");
+        Equal(AntiShipAttackStage.SupportOrComplete, StrikeMissionLogic.NextAntiShipStage(AntiShipAttackStage.AshmVolley), "ashm then support stage");
+        Equal(AntiShipAttackStage.LaserVolley, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.AgmVolley, false, 0, false, 0), "empty agm advances before maneuver holds");
+        Equal(AntiShipAttackStage.LaserVolley, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.LaserVolley, true, 1, false, 0), "laser ammo blocks ashm stage");
+        Equal(AntiShipAttackStage.LaserVolley, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.LaserVolley, false, 0, true, 0), "laser pending blocks ashm stage");
+        Equal(AntiShipAttackStage.AshmVolley, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.LaserVolley, false, 0, false, 1), "active laser alone permits ashm stage");
+        Equal(AntiShipAttackStage.SupportOrComplete, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.AshmVolley, false, 0, true, 0), "ashm exhaustion enters pending laser support");
+        Equal(AntiShipAttackStage.SupportOrComplete, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.AshmVolley, false, 0, false, 1), "ashm exhaustion enters active laser support");
+        Equal(AntiShipAttackStage.SupportOrComplete, StrikeMissionLogic.AdvanceEmptyAntiShipStage(AntiShipAttackStage.AshmVolley, false, 0, false, 0), "ashm exhaustion enters completion stage");
+        Equal(MapAmmoKind.Ash, MapAmmoLogic.Classify(Ammo(agm: true, lineOfSight: false)), "map tusko is ash");
+        Equal(MapAmmoKind.Gun, MapAmmoLogic.Classify(Ammo(gun: true)), "map ammo gun");
+        Equal(MapAmmoKind.Ir, MapAmmoLogic.Classify(Ammo(ir: true)), "map ammo ir");
+        Equal(MapAmmoKind.Arh, MapAmmoLogic.Classify(Ammo(arh: true)), "map ammo arh");
+        Equal(MapAmmoKind.Sarh, MapAmmoLogic.Classify(Ammo(seeker: "SARH")), "map ammo sarh");
+        Equal(MapAmmoKind.Arm, MapAmmoLogic.Classify(Ammo(arm: true)), "map ammo arm");
+        Equal(MapAmmoKind.Ash, MapAmmoLogic.Classify(Ammo(ash: true)), "map ammo ash");
+        Equal(MapAmmoKind.Agm, MapAmmoLogic.Classify(Ammo(agm: true)), "map ammo agm");
+        Equal(MapAmmoKind.Rkt, MapAmmoLogic.Classify(Ammo(laserGuided: true, laserSeeker: true)),
+              "laser guided non-missile rocket");
+        Equal(MapAmmoKind.Nuclear, MapAmmoLogic.Classify(Ammo(nuclear: true, bomb: true, glide: true)),
+              "nuclear priority");
+        Equal(MapAmmoKind.Glide, MapAmmoLogic.Classify(Ammo(glide: true, bomb: true)), "glide priority");
+        Equal(MapAmmoKind.Bomb, MapAmmoLogic.Classify(Ammo(bomb: true, gun: true)), "bomb priority");
+        Equal(MapAmmoKind.None, MapAmmoLogic.Classify(Ammo()), "unknown map ammo omitted");
+        Equal(MapAmmoKind.None, MapAmmoLogic.Classify(Ammo(cargo: true, gun: true)), "cargo omitted once");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(gun: true, ammo: 0), out _, out int noAmmo),
+              "zero ammo makes no contribution");
+        Equal(0, noAmmo, "zero ammo contribution is zero");
+        Equal(true, MapAmmoLogic.TryGetContribution(Ammo(gun: true, ammo: 7), out MapAmmoKind contributed, out int amount),
+              "positive ammo contributes once");
+        Equal(MapAmmoKind.Gun, contributed, "contribution has one category");
+        Equal(7, amount, "contribution preserves station ammo");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(cargo: true, gun: true), out _, out _), "info or station cargo excludes");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(sling: true, gun: true), out _, out _), "sling excludes");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(troops: true, gun: true), out _, out _), "troops excludes");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(jammer: true, gun: true), out _, out _), "jammer excludes");
+        Equal(false, MapAmmoLogic.TryGetContribution(Ammo(), out _, out _), "unknown makes no contribution");
+        int[] ammoDisplay = new int[12];
+        ammoDisplay[(int)MapAmmoKind.Gun] = 500; ammoDisplay[(int)MapAmmoKind.Ir] = 5;
+        ammoDisplay[(int)MapAmmoKind.Arh] = 3; ammoDisplay[(int)MapAmmoKind.Nuclear] = 1;
+        Equal("GUN 500 · IR 05 · ARH 03 · NUC 01", MapAmmoLogic.Format(ammoDisplay), "stable ammo display order");
+        Equal("WEAPONS --", MapAmmoLogic.Format(new int[12]), "empty weapon display");
+        Equal(4, WingmanGroupLogic.GroupSize, "physical cradle capacity is four");
+        // Missile defense is a runtime-only per-aircraft preemption and intentionally has no desired-state value.
+        Equal(true, MissileDefenseLogic.IsManeuverFeasible(float.PositiveInfinity, 2.5f), "infinite tti is feasible");
+        Equal(false, MissileDefenseLogic.IsManeuverFeasible(4.9f, 2.5f), "short tti is infeasible");
+        Equal(MissileSeekerType.Ir, MissileDefenseLogic.ClassifySeekerType("IR"), "ir seeker classification");
+        Equal(MissileSeekerType.Radar, MissileDefenseLogic.ClassifySeekerType("ARH"), "arh seeker classification");
+        Equal(MissileSeekerType.Radar, MissileDefenseLogic.ClassifySeekerType("SARH"), "sarh seeker classification");
+        Equal(MissileSeekerType.Unknown, MissileDefenseLogic.ClassifySeekerType("OTHER"), "unknown seeker classification");
+        Equal(MissileSeekerType.Unknown, MissileDefenseLogic.ClassifySeekerType(null), "null seeker classification");
+        Equal(true, MissileDefenseLogic.ShouldPulseRadarCountermeasure(7.9f, 19.9f), "radar cm gate accepts inside boundaries");
+        Equal(false, MissileDefenseLogic.ShouldPulseRadarCountermeasure(8f, 19.9f), "radar cm gate excludes eight seconds");
+        Equal(false, MissileDefenseLogic.ShouldPulseRadarCountermeasure(7.9f, 20f), "radar cm gate excludes twenty degrees");
+        Equal(false, MissileDefenseLogic.ShouldPulseRadarCountermeasure(float.NaN, 10f), "radar cm gate rejects nan tti");
+        Equal(false, MissileDefenseLogic.ShouldPulseRadarCountermeasure(1f, float.NaN), "radar cm gate rejects nan alignment");
+        Equal(true, MissileDefenseLogic.ShouldPulseAntiShipRadarCountermeasure(7.9f), "asuw radar pulse accepts inside eight seconds");
+        Equal(false, MissileDefenseLogic.ShouldPulseAntiShipRadarCountermeasure(8f), "asuw radar pulse excludes eight seconds");
+        Equal(false, MissileDefenseLogic.ShouldPulseAntiShipRadarCountermeasure(-1f), "asuw radar pulse rejects negative tti");
+        Equal(false, MissileDefenseLogic.ShouldPulseAntiShipRadarCountermeasure(float.NaN), "asuw radar pulse rejects nan");
+        Equal(false, MissileDefenseLogic.ShouldPulseAntiShipRadarCountermeasure(float.PositiveInfinity), "asuw radar pulse rejects infinity");
+        Equal(AntiShipDefenseArbitration.PreserveGenericDefense,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(true, true, MissileSeekerType.Ir, MissileSeekerType.Radar),
+              "attempted ir generic defense keeps priority over radar");
+        Equal(AntiShipDefenseArbitration.PreserveGenericDefense,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(true, true, MissileSeekerType.Unknown, MissileSeekerType.Radar),
+              "attempted unknown generic defense keeps priority over radar");
+        Equal(AntiShipDefenseArbitration.DelegateRadarToAntiShip,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(true, true, MissileSeekerType.Radar, MissileSeekerType.Radar),
+              "active radar generic defense restores asuw handling");
+        Equal(AntiShipDefenseArbitration.DelegateRadarToAntiShip,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(true, false, MissileSeekerType.Radar, MissileSeekerType.Radar),
+              "attempted radar without active generic defense delegates asuw");
+        Equal(AntiShipDefenseArbitration.None,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(true, false, MissileSeekerType.Unknown, MissileSeekerType.Ir),
+              "non-radar candidate has no asuw arbitration");
+        Equal(AntiShipDefenseArbitration.None,
+              MissileDefenseLogic.ArbitrateAntiShipDefense(false, false, MissileSeekerType.Unknown, MissileSeekerType.Radar),
+              "non-asuw radar has no asuw arbitration");
+        Equal(true, MissileDefenseLogic.ShouldTerminalClimb(1.9f), "terminal climb accepts inside two seconds");
+        Equal(false, MissileDefenseLogic.ShouldTerminalClimb(2f), "terminal climb excludes two seconds");
+        Equal(MissileDefensePhase.FireAttempt,
+              MissileDefenseLogic.AdvancePhase(MissileDefensePhase.TerminalAcquire, 99f),
+              "terminal fires immediately");
+        Equal(.75f, MissileDefenseLogic.RadarManeuverTime(0f), "radar zero heading error");
+        Equal(8.25f, MissileDefenseLogic.RadarManeuverTime(90f), "radar ninety heading error");
+        Equal(true, MissileDefenseLogic.IsManeuverFeasible(5f, 2.5f), "ir maneuver time boundary");
+        Equal(false, LoiterCommandLogic.ShouldIngress(true, 2199f), "inside loiter radius orbits");
+        Equal(false, LoiterCommandLogic.ShouldIngress(true, 2200f), "loiter radius boundary orbits");
+        Equal(true, LoiterCommandLogic.ShouldIngress(true, 2200.01f), "outside loiter radius cruises");
+        Equal(false, LoiterCommandLogic.ShouldIngress(false, 2201f), "leader loiter directly orbits");
+        Equal(123f, LoiterCommandLogic.OrbitTargetSpeed(123f), "valid corner speed is orbit target");
+        Equal(165f, LoiterCommandLogic.OrbitTargetSpeed(float.NaN), "nan corner speed falls back");
+        Equal(165f, LoiterCommandLogic.OrbitTargetSpeed(float.PositiveInfinity), "infinite corner speed falls back");
+        Equal(165f, LoiterCommandLogic.OrbitTargetSpeed(0f), "zero corner speed falls back");
+        Equal(.6f, LoiterCommandLogic.OrbitThrottle(200f, 200f, .8f), "orbit target uses eco throttle");
+        Equal(true, LoiterCommandLogic.OrbitThrottle(400f, 200f, .8f) < .6f, "orbit overspeed lowers throttle");
+        Equal(true, LoiterCommandLogic.OrbitThrottle(400f, 200f, .8f) >= .3f, "orbit overspeed respects floor");
+        Equal(1f, LoiterCommandLogic.OrbitThrottle(170f, 200f, .8f), "orbit fifteen percent deficit restores full throttle");
+        Equal(true, LoiterCommandLogic.OrbitThrottle(190f, 200f, .8f) > .6f, "orbit low speed restores continuously");
+        Equal(.8f, LoiterCommandLogic.OrbitThrottle(float.NaN, 200f, .8f), "nan speed uses cruise throttle");
+        Equal(.65f, LoiterCommandLogic.OrbitThrottle(float.PositiveInfinity, float.NaN, float.NaN),
+              "invalid speed and parameters use safe cruise throttle");
+        Equal(true, float.IsFinite(LoiterCommandLogic.OrbitThrottle(float.NegativeInfinity, float.PositiveInfinity,
+                                                                       float.PositiveInfinity)),
+              "orbit invalid inputs remain finite");
+        Equal(false, RtbCancellationLogic.CanCancel(false, false, false, false, false, 100f, out string rtbReason),
+              "non-returning cancel rejects");
+        Equal("not_returning", rtbReason, "non-returning cancel reason");
+        Equal(false, RtbCancellationLogic.CanCancel(true, false, false, false, false, .2f, out rtbReason),
+              "radar altitude boundary commits rtb");
+        Equal("rtb_committed", rtbReason, "radar altitude boundary reason");
+        Equal(false, RtbCancellationLogic.CanCancel(true, false, false, false, false, float.NaN, out rtbReason),
+              "nan radar altitude commits rtb");
+        Equal("rtb_committed", rtbReason, "nan radar altitude reason");
+        Equal(true, RtbCancellationLogic.CanCancel(true, false, false, false, false, .2001f, out rtbReason),
+              "airborne rtb cancel accepts");
+        Equal("", rtbReason, "airborne rtb cancel reason");
+        Equal(false, RtbCancellationLogic.CanCancel(true, true, false, false, false, 100f, out _),
+              "disabled rtb commits");
+        Equal(false, RtbCancellationLogic.CanCancel(true, false, true, false, false, 100f, out _),
+              "ejected rtb commits");
+        Equal(false, RtbCancellationLogic.CanCancel(true, false, false, true, false, 100f, out _),
+              "abandoned rtb commits");
+        Equal(false, RtbCancellationLogic.CanCancel(true, false, false, false, true, 100f, out _),
+              "returned rtb commits");
+
+        float bestTti = float.PositiveInfinity;
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(false, 100f, 100f, bestTti, out _),
+              "non-self-targeted missile is ignored");
+        Equal(true, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 400f, 100f, bestTti, out bestTti),
+              "first self-targeted threat is selected");
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 600f, 100f, bestTti, out _),
+              "longer tti threat loses");
+        Equal(true, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 100f, 100f, bestTti, out bestTti),
+              "shortest tti wins among multiple threats");
+        Equal(1f, bestTti, "shortest tti value retained");
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 100f, 0f,
+                                                                           float.PositiveInfinity, out _),
+              "non-closing relative speed has no candidate");
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 0f, 100f,
+                                                                           float.PositiveInfinity, out _),
+              "zero-range input has no candidate");
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 100f, float.NaN,
+                                                                           float.PositiveInfinity, out _),
+              "nan closing speed has no candidate");
+        Equal(false, MissileDefenseLogic.TrySelectShorterSelfTargetedTti(true, 100f, float.PositiveInfinity,
+                                                                           float.PositiveInfinity, out _),
+              "infinite closing speed has no candidate");
+
+        RadarBeam forwardThreat = MissileDefenseLogic.ChooseRadarBeam(1f, 0f, 1f, 0f);
+        Equal(90f, forwardThreat.error, "front threat beam error");
+        Equal(8.25f, MissileDefenseLogic.RadarManeuverTime(forwardThreat.error), "front threat radar time");
+
+        RadarBeam sideThreat = MissileDefenseLogic.ChooseRadarBeam(1f, 0f, 0f, 1f);
+        Equal(0f, sideThreat.error, "side threat beam error");
+
+        RadarBeam symmetric = MissileDefenseLogic.ChooseRadarBeam(1f, 0f, 1f, 0f);
+        Equal(1, symmetric.side, "symmetric beam deterministic");
+        string?[] defaults = { "AGM", "ROLE", "OTHER" };
+        Equal(true, CarrierFqLoadoutPlan.TryCreate(1, defaults, out CarrierFqLoadoutPlan? oneCradle), "one cradle creates");
+        Equal(4, oneCradle!.PhysicalRoundsPerCradle, "one cradle has four physical-round rows");
+        Equal(true, CarrierFqLoadoutPlan.TryCreate(2, defaults, out CarrierFqLoadoutPlan? plan), "two cradles create");
+        CarrierFqLoadoutPlan twoCradles = plan!;
+        int addressable = 0;
+        for (int cradleIndex = 0; cradleIndex < 2; ++cradleIndex)
+            for (int physicalRound = 0; physicalRound < FqCradleLoadoutLogic.PhysicalRoundsPerCradle; ++physicalRound)
+                if (twoCradles.TryGetRow(cradleIndex, physicalRound, out _)) ++addressable;
+        Equal(8, addressable, "two cradles have eight addressable rows");
+        Equal(true, CarrierFqLoadoutPlan.TryCreate(3, defaults, out CarrierFqLoadoutPlan? threeCradles), "three cradles create");
+        Equal(true, threeCradles!.TryGetRow(2, 3, out _), "third cradle is addressable");
+        Equal(true, twoCradles.TrySet(0, 2, 1, "CRADLE1_ROUND3"), "cradle 1 physical round 3 edit");
+        twoCradles.TryGetRow(1, 2, out string?[] cradleTwoRound3);
+        Equal("ROLE", cradleTwoRound3[1], "cradle 1 edit does not affect cradle 2");
+        CarrierFqLoadoutPlan planCopy = twoCradles.Copy();
+        twoCradles.TrySet(0, 2, 1, "ORIGINAL_EDIT");
+        planCopy.TryGetRow(0, 2, out string?[] copiedRow);
+        Equal("CRADLE1_ROUND3", copiedRow[1], "copy is deep");
+        twoCradles.TryGetRow(0, 2, out string?[] capturedRow);
+        twoCradles.TrySet(0, 2, 1, "LATER_EDIT");
+        Equal("ORIGINAL_EDIT", capturedRow[1], "captured row ignores later plan edit");
+        capturedRow[1] = "CAPTURE_EDIT";
+        twoCradles.TryGetRow(0, 2, out string?[] currentRow);
+        Equal("LATER_EDIT", currentRow[1], "captured row cannot edit plan");
+        planCopy.TrySet(1, 2, 1, "COPY_EDIT");
+        twoCradles.TryGetRow(1, 2, out cradleTwoRound3);
+        Equal("ROLE", cradleTwoRound3[1], "copy edit does not affect original");
+        Equal(true, FqCradleLoadoutLogic.TryCreateResetPlan(3, defaults, 0, "IR", 1, "AAM2_double", "ARM", "ASHM", out CarrierFqLoadoutPlan? reset), "reset creates every cradle");
+        for (int cradleIndex = 0; cradleIndex < 3; ++cradleIndex)
+        {
+            reset!.TryGetRow(cradleIndex, 0, out string?[] fq1Row); reset.TryGetRow(cradleIndex, 2, out string?[] fq3Row);
+            reset.TryGetRow(cradleIndex, 3, out string?[] fq4Row);
+            Equal("IR", fq1Row[0], "IR reset cradle " + cradleIndex);
+            Equal("AAM2_double", fq1Row[1], "AAM reset cradle " + cradleIndex);
+            Equal("ARM", fq3Row[1], "ARM reset cradle " + cradleIndex);
+            Equal("ASHM", fq4Row[1], "AShM reset cradle " + cradleIndex);
+        }
+        Equal(false, twoCradles.TryGetRow(-1, 0, out _), "negative cradle rejects");
+        Equal(false, twoCradles.TryGetRow(0, -1, out _), "negative physical round rejects");
+        Equal(false, twoCradles.TryGetRow(0, 4, out _), "physical round four does not wrap");
+        Equal(false, twoCradles.TryGetRow(2, 0, out _), "cradle overflow rejects");
+        Equal(false, twoCradles.TrySet(0, 4, 0, "X"), "physical round four set rejects");
+        Equal(false, twoCradles.TrySet(0, 0, 3, "X"), "hardpoint overflow rejects");
+        Equal(true, CarrierFqLoadoutPlan.TryCreate(0, defaults, out CarrierFqLoadoutPlan? zeroCradles), "zero cradles create");
+        Equal(0, zeroCradles!.CradleCount, "zero cradles remain zero");
+        Equal(false, zeroCradles.TryGetRow(0, 0, out _), "zero cradles have no fallback row");
+        Equal(false, CarrierFqLoadoutPlan.TryCreate(-1, defaults, out _), "negative cradles reject");
+        Equal(false, FqCradleLoadoutLogic.TryCreateResetPlan(2, defaults, 0, "IR", 0, "AAM", "ARM", "ASHM", out _),
+              "IR and role mounts reject the same hardpoint");
+
+        Equal(true, CradleReleaseProgressionLogic.ShouldScheduleWingman(true, true), "server resolved schedules wingman");
+        Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(true, false), "server resolver failure does not schedule wingman");
+        Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(false, true), "client resolved does not schedule wingman");
+        Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(false, false), "client unresolved does not schedule wingman");
+        Equal(false, AircraftSwitchLogic.NeedsLocalSimTransition(false, false), "localsim false remains skip");
+        Equal(true, AircraftSwitchLogic.NeedsLocalSimTransition(false, true), "localsim false to true transitions");
+        Equal(true, AircraftSwitchLogic.NeedsLocalSimTransition(true, false), "localsim true to false transitions");
+        Equal(false, AircraftSwitchLogic.NeedsLocalSimTransition(true, true), "localsim true remains skip");
+        Equal(true, AircraftSwitchLogic.CanQueueEmergencyReturn(true, true, true, true), "emergency return admits exact facts");
+        Equal(false, AircraftSwitchLogic.CanQueueEmergencyReturn(false, true, true, true), "emergency return rejects unavailable request or session");
+        Equal(false, AircraftSwitchLogic.CanQueueEmergencyReturn(true, false, true, true), "emergency return rejects unmanaged current source");
+        Equal(false, AircraftSwitchLogic.CanQueueEmergencyReturn(true, true, false, true), "emergency return rejects incomplete authoritative spawned source");
+        Equal(false, AircraftSwitchLogic.CanQueueEmergencyReturn(true, true, true, false), "emergency return rejects invalid exact home");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(false, false, false), "emergency return ownership rejects no matching facts");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(false, false, true), "emergency return ownership rejects stale request and session");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(false, true, false), "emergency return ownership rejects stale request and generation");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(false, true, true), "emergency return ownership rejects stale request");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(true, false, false), "emergency return ownership rejects stale session and generation");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(true, false, true), "emergency return ownership rejects stale session");
+        Equal(false, AircraftSwitchLogic.OwnsEmergencyReturnRequest(true, true, false), "emergency return ownership rejects stale generation");
+        Equal(true, AircraftSwitchLogic.OwnsEmergencyReturnRequest(true, true, true), "emergency return ownership accepts current request generation");
+        Equal(EmergencyReturnOutcome.FatalPartial, AircraftSwitchLogic.ResolveEmergencyReturnOutcome(false, false), "emergency return neither ownership is fatal partial");
+        Equal(EmergencyReturnOutcome.CompleteTarget, AircraftSwitchLogic.ResolveEmergencyReturnOutcome(false, true), "emergency return target ownership completes target");
+        Equal(EmergencyReturnOutcome.DetachOld, AircraftSwitchLogic.ResolveEmergencyReturnOutcome(true, false), "emergency return old ownership detaches old");
+        Equal(EmergencyReturnOutcome.FatalPartial, AircraftSwitchLogic.ResolveEmergencyReturnOutcome(true, true), "emergency return dual ownership is fatal partial");
+        Equal(true, AircraftSwitchLogic.ShouldInstallCarrierCruise(true, true), "exact home plus configured drone installs cruise without carrier json");
+        Equal(false, AircraftSwitchLogic.ShouldInstallCarrierCruise(true, false), "exact home wrong target rejects cruise");
+        Equal(false, AircraftSwitchLogic.ShouldInstallCarrierCruise(false, true), "non-home configured drone rejects cruise");
+        Equal(false, AircraftSwitchLogic.ShouldInstallCarrierCruise(false, false), "non-home wrong target rejects cruise");
+        Equal(CradleNativeReleasePath.Cmd, CradleReleaseProgressionLogic.NativePath(false, true), "owner client selects Cmd");
+        Equal(CradleNativeReleasePath.Cmd, CradleReleaseProgressionLogic.NativePath(false, true), "owner-client resolver failure still composes to Cmd");
+        Equal(CradleNativeReleasePath.Rpc, CradleReleaseProgressionLogic.NativePath(true, true), "listen host selects Rpc only");
+        Equal(CradleNativeReleasePath.None, CradleReleaseProgressionLogic.NativePath(true, false), "dedicated remote-owner server invocation selects no inner dispatch");
+        Equal(CradleNativeReleasePath.None, CradleReleaseProgressionLogic.NativePath(false, false), "observer non-owner selects no dispatch");
+        Equal(1,
+              (CradleReleaseProgressionLogic.NativePath(true, true) == CradleNativeReleasePath.Rpc ? 1 : 0) + 0,
+              "composed direct listen host has one inner Rpc and no outer Rpc");
+        Equal(1,
+              CradleReleaseProgressionLogic.NativePath(false, true) == CradleNativeReleasePath.Cmd ? 1 : 0,
+              "composed owner client sends one Cmd");
+        Equal(1,
+              (CradleReleaseProgressionLogic.NativePath(true, false) == CradleNativeReleasePath.Rpc ? 1 : 0) + 1,
+              "composed remote-owner server invocation has no inner Rpc and one native outer Rpc");
+        Equal(0,
+              (CradleReleaseProgressionLogic.NativePath(false, false) == CradleNativeReleasePath.Cmd ? 1 : 0) +
+              (CradleReleaseProgressionLogic.NativePath(false, false) == CradleNativeReleasePath.Rpc ? 1 : 0),
+              "composed observer has no inner outbound dispatch");
+        Equal(1,
+              CradleReleaseProgressionLogic.NativePath(false, true) == CradleNativeReleasePath.Cmd ? 1 : 0,
+              "composed resolver failure still sends one owner-client Cmd");
+        Equal(1,
+              (CradleReleaseProgressionLogic.NativePath(true, false) == CradleNativeReleasePath.Rpc ? 1 : 0) + 1,
+              "composed callback rejection still relies on one native outer Rpc");
+        Equal(1,
+              (CradleReleaseProgressionLogic.NativePath(true, false) == CradleNativeReleasePath.Rpc ? 1 : 0) + 1,
+              "composed callback exception still relies on one native outer Rpc");
+        bool createdSession = true;
+        bool completeSession = true;
+        Equal("rtb_in_progress", CradleReleaseProgressionLogic.SessionBlockReason(true, false || false, true, true),
+              "session admission returning takes precedence");
+        Equal("switch_not_ready", CradleReleaseProgressionLogic.SessionBlockReason(false, false || false, true, true),
+              "session admission not-ready takes precedence over busy and pending");
+        Equal("busy", CradleReleaseProgressionLogic.SessionBlockReason(false, createdSession || false, true, true),
+              "session admission created state is ready and busy takes precedence over pending");
+        Equal("native_release_pending", CradleReleaseProgressionLogic.SessionBlockReason(false, false || completeSession, false, true),
+              "session admission complete state is ready and pending blocks");
+        Equal<string?>(null, CradleReleaseProgressionLogic.SessionBlockReason(false, createdSession || false, false, false),
+                       "session admission created state is ready when idle");
+        Equal(false, MultiplayerCleanupLogic.ShouldFailClosedDespawn(true, true, false),
+              "single-player safe despawn remains separate from fail-closed policy");
+        Equal(false, MultiplayerCleanupLogic.ShouldFailClosedDespawn(false, false, false),
+              "multiplayer client inactive server does not fail-close despawn");
+        Equal(true, MultiplayerCleanupLogic.ShouldFailClosedDespawn(false, true, false),
+              "multiplayer active server without player association fail-closes deployed FQ");
+        Equal(false, MultiplayerCleanupLogic.ShouldFailClosedDespawn(false, true, true),
+              "multiplayer active server preserves any player-associated aircraft");
+        Equal(false, MultiplayerCleanupLogic.ShouldClearClientSnapshot(true), "snapshot success does not request failure clear");
+        Equal(true, MultiplayerCleanupLogic.ShouldClearClientSnapshot(false), "snapshot failure clears");
+        Equal(true, TakeControlAdmissionLogic.CanTakeControl(true, true, false, false),
+              "take control normal valid single FQ allowed");
+        Equal(true, TakeControlAdmissionLogic.CanTakeControl(true, true, false, false),
+              "take control pending RTB remains allowed");
+        Equal(true, TakeControlAdmissionLogic.CanTakeControl(true, true, false, false),
+              "take control committed RTB remains allowed");
+        Equal(true, TakeControlAdmissionLogic.CanTakeControl(true, true, false, false),
+               "take control non-returning Home target remains allowed");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(true, false, false, false),
+               "take control returning Home target denied");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(true, false, false, false),
+              "take control invalid or disabled FQ denied");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(true, true, true, false),
+              "take control current target denied");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(false, true, false, false),
+              "take control zero selection denied");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(false, true, false, false),
+              "take control multi selection denied");
+        Equal(false, TakeControlAdmissionLogic.CanTakeControl(true, true, false, true),
+              "take control remote-mode-only denied");
+        Equal(true, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, true, false, true, true, true), "port admits exact friendly AI");
+        Equal(false, DroneCarrierPortLogic.CanCapture(false, true, true, true, false, true, true, false, true, true, true), "port rejects inactive server");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, false, true, false, true, true, false, true, true, true), "port rejects non-kestrel");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, true, true, true, false, true, true, true), "port rejects player association");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, false, true, false, true, true, true), "port rejects foreign HQ");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, false, false, true, true, true), "port requires trigger candidate");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, true, true, true, true, true), "port rejects conflicting route");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, true, false, false, true, true), "port rejects carrier authority loss");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, true, false, true, false, true), "port rejects candidate authority loss");
+        Equal(false, DroneCarrierPortLogic.CanCapture(true, true, true, true, false, true, true, false, true, true, false), "port rejects unusable projection");
+        Equal(true, DroneCarrierPortLogic.ShouldSuppressReleaseCapture(true, false), "port binding suppresses capture");
+        Equal(true, DroneCarrierPortLogic.ShouldSuppressReleaseCapture(false, true), "port exact released aircraft is suppressed");
+        Equal(false, DroneCarrierPortLogic.ShouldSuppressReleaseCapture(false, false), "port admits unrelated aircraft after binding");
+        Equal(false, DroneCarrierPortLogic.ShouldClearReleaseExclusion(true, true, false), "port exclusion holds while occupancy remains");
+        Equal(false, DroneCarrierPortLogic.ShouldClearReleaseExclusion(true, false, true), "port exclusion holds while geometry overlaps");
+        Equal(true, DroneCarrierPortLogic.ShouldClearReleaseExclusion(true, false, false), "port exclusion clears outside trigger");
+        Equal(true, DroneCarrierPortLogic.ShouldClearReleaseExclusion(false, true, true), "port exclusion clears invalid candidate");
+        Equal(true, DroneCarrierPortLogic.CanDestroyAfterReleaseRollback(false, false), "port unattached rollback destroys");
+        Equal(true, DroneCarrierPortLogic.CanDestroyAfterReleaseRollback(true, true), "port detached rollback destroys");
+        Equal(false, DroneCarrierPortLogic.CanDestroyAfterReleaseRollback(true, false), "port detach failure preserves managed drone");
+        DroneCarrierPortState portState = DroneCarrierPortState.Loaded;
+        Equal(false, DroneCarrierPortLogic.TryBegin(ref portState, false), "port inactive authority never begins");
+        Equal(true, DroneCarrierPortLogic.TryBegin(ref portState, true), "port loaded begins once");
+        Equal(false, DroneCarrierPortLogic.TryComplete(ref portState, false), "port authority loss cancels completion");
+        Equal(DroneCarrierPortState.Loaded, portState, "port failed completion retains descriptor state");
+        DroneCarrierPortLogic.TryBegin(ref portState, true);
+        Equal(true, DroneCarrierPortLogic.TryComplete(ref portState, true), "port completion grants bypass");
+        Equal(false, DroneCarrierPortLogic.TryConsumeBypass(ref portState, false), "port inactive authority never bypasses");
+        Equal(DroneCarrierPortState.Loaded, portState, "port authority loss restores descriptor state");
+        Equal(true, DroneCarrierPortLogic.TryBegin(ref portState, true), "port restored descriptor can begin");
+        Equal(true, DroneCarrierPortLogic.TryComplete(ref portState, true), "port restored descriptor completes");
+        Equal(true, DroneCarrierPortLogic.TryConsumeBypass(ref portState, true), "port consumes one bypass");
+        Equal(false, DroneCarrierPortLogic.TryConsumeBypass(ref portState, true), "port stale bypass fails");
+        Equal(true, DroneCarrierPortLogic.TryConsumeAcceptedFire(ref portState), "port accepted firing consumes once");
+        Equal(false, DroneCarrierPortLogic.TryConsumeAcceptedFire(ref portState), "port direct or duplicate fire fails");
+        DroneCarrierPortLogic.Cancel(ref portState, true);
+        Equal(DroneCarrierPortState.Loaded, portState, "port cancellation retains loaded descriptor");
+        DroneCarrierPortLogic.Cancel(ref portState, false);
+        Equal(DroneCarrierPortState.Empty, portState, "port lifecycle reset empties descriptor");
+        portState = DroneCarrierPortState.NativeBypass;
+        DroneCarrierPortLogic.Reset(ref portState);
+        Equal(DroneCarrierPortState.Empty, portState, "port lifecycle reset clears bypass projection");
+        Equal(true, DroneCarrierPortLogic.TryReservePlayerRecovery(ref portState), "player recovery reserves pending handoff");
+        Equal(DroneCarrierPortState.PlayerReserved, portState, "player reservation state retained");
+        Equal(true, DroneCarrierPortLogic.TryBeginPlayerHandoff(ref portState), "player recovery enters pending handoff");
+        Equal(DroneCarrierPortState.PlayerHandoff, portState, "player handoff state retained");
+        Equal(true, DroneCarrierPortLogic.TryCommitPlayerHandoff(ref portState), "player handoff commits loaded");
+        Equal(DroneCarrierPortState.Loaded, portState, "player handoff success becomes loaded");
+        DroneCarrierPortLogic.Reset(ref portState);
+        Equal(DroneCarrierPortState.Empty, portState, "player handoff cancellation remains empty");
+        Equal(true, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, true, true, true, true, true), "player recovery admits exact facts");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(false, true, true, true, true, true, true, true, true), "player recovery rejects server");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, false, true, true, true, true, true, true, true), "player recovery rejects session");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, false, true, true, true, true, true, true), "player recovery rejects authority");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, false, true, true, true, true, true), "player recovery rejects route");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, false, true, true, true, true), "player recovery rejects home");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, true, false, true, true, true), "player recovery rejects readiness");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, true, true, false, true, true), "player recovery rejects trigger");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, true, true, true, false, true), "player recovery rejects projection");
+        Equal(false, DroneCarrierPortLogic.CanBeginPlayerRecovery(true, true, true, true, true, true, true, true, false), "player recovery rejects reservation");
+        Equal(false, DroneCarrierPortLogic.TryBeginPlayerHandoff(ref portState), "empty player handoff cannot skip reservation");
+        portState = DroneCarrierPortState.Loaded;
+        Equal(false, DroneCarrierPortLogic.TryReservePlayerRecovery(ref portState), "AI loaded state is not player-pending");
+        Equal(DroneCarrierPortState.Loaded, portState, "AI reservation state remains distinct");
+        DroneCarrierPortLogic.Reset(ref portState);
+        Equal(true, DroneCarrierPortLogic.ShouldProtectPendingPlayerRecovery(true), "pending recovery protected regardless of session state");
+        Equal(false, DroneCarrierPortLogic.ShouldProtectPendingPlayerRecovery(false), "ordinary switching is not protected");
+        Equal(AnimatedProviderBindDecision.Legacy, DroneCarrierPortLogic.ResolveAnimatedProviderBind(0, false, 0),
+            "animated_provider_zero_expected_uses_legacy");
+        Equal(AnimatedProviderBindDecision.Inert, DroneCarrierPortLogic.ResolveAnimatedProviderBind(1, false, 0),
+            "animated_provider_invalid_expected_is_inert");
+        Equal(AnimatedProviderBindDecision.Animated, DroneCarrierPortLogic.ResolveAnimatedProviderBind(1, true, 0),
+            "animated_provider_single_valid_expected_is_animated");
+        Equal(AnimatedProviderBindDecision.Inert, DroneCarrierPortLogic.ResolveAnimatedProviderBind(2, true, 0),
+            "animated_provider_multiple_expected_are_inert");
+        Equal(AnimatedProviderBindDecision.Inert, DroneCarrierPortLogic.ResolveAnimatedProviderBind(1, true, 1),
+            "animated_provider_additional_valid_claim_is_inert");
+        Equal(true, DroneCarrierPortLogic.IsPureLegacyReleaseEligible(false, false),
+            "port true non_provider remains legacy eligible");
+        Equal(false, DroneCarrierPortLogic.IsPureLegacyReleaseEligible(false, true),
+            "port inert expected provider denies legacy release");
+        Equal(false, DroneCarrierPortLogic.IsPureLegacyReleaseEligible(true, false),
+            "port valid provider remains nonlegacy");
+        portState = DroneCarrierPortState.NativeBypass;
+        DroneCarrierPortLogic.Cancel(ref portState, true);
+        Equal(DroneCarrierPortState.Loaded, portState, "animated_native_bypass_exception_refunds_unconsumed_release");
+        portState = DroneCarrierPortState.AcceptedFiring;
+        DroneCarrierPortLogic.Cancel(ref portState, true);
+        Equal(DroneCarrierPortState.Loaded, portState, "animated_accepted_firing_exception_refunds_unconsumed_release");
+        portState = DroneCarrierPortState.AcceptedFiring;
+        DroneCarrierPortLogic.TryConsumeAcceptedFire(ref portState);
+        Equal(DroneCarrierPortState.Empty, portState, "animated_consumed_native_release_remains_empty");
+        Equal(true, DroneCarrierPortLogic.AcceptAnimatedPortMilestone(7, 7, AnimatedPortMotion.ExtendingRelease,
+            AnimatedPortMotion.ExtendingRelease, "Extended", "Extended"), "animated_port_accepts_exact_callback_token");
+        Equal(false, DroneCarrierPortLogic.AcceptAnimatedPortMilestone(7, 6, AnimatedPortMotion.ExtendingRelease,
+            AnimatedPortMotion.ExtendingRelease, "Extended", "Extended"), "animated_port_ignores_stale_callback_token");
+        Equal(false, DroneCarrierPortLogic.AcceptAnimatedPortMilestone(0, 0, AnimatedPortMotion.ExtendingRelease,
+            AnimatedPortMotion.ExtendingRelease, "Extended", "Extended"), "animated_port_ignores_inactive_callback_token");
+        Equal(false, DroneCarrierPortLogic.AcceptAnimatedPortMilestone(7, 7, AnimatedPortMotion.ExtendingCapture,
+            AnimatedPortMotion.ExtendingRelease, "Extended", "Extended"), "animated_port_ignores_wrong_expected_motion");
+        Equal(false, DroneCarrierPortLogic.AcceptAnimatedPortMilestone(7, 7, AnimatedPortMotion.ExtendingRelease,
+            AnimatedPortMotion.ExtendingRelease, "Locked", "Extended"), "animated_port_ignores_wrong_milestone");
+        bool nativeLaunchIssued = false;
+        Equal(true, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref nativeLaunchIssued), "animated_port_native_launch_authorizes_once");
+        Equal(false, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref nativeLaunchIssued), "animated_port_duplicate_native_launch_blocked");
+        bool captureCompletionConsumed = false;
+        Equal(true, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref captureCompletionConsumed), "animated_port_capture_completion_authorizes_once");
+        Equal(false, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref captureCompletionConsumed), "animated_port_duplicate_capture_completion_blocked");
+        bool independentlyConsumed = false;
+        Equal(true, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref independentlyConsumed), "animated_port_independent_one_shot_remains_isolated");
+        Equal(false, DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref independentlyConsumed), "animated_port_independent_one_shot_duplicate_remains_blocked");
+        Equal(true, DroneCarrierPortLogic.CloseAnimatedPortFullyStowed(7, 7, AnimatedPortMotion.RetractingRelease, "FullyStowed"), "animated_port_fully_stowed_closes_retracting_release");
+        Equal(true, DroneCarrierPortLogic.CloseAnimatedPortFullyStowed(7, 7, AnimatedPortMotion.RetractingCapture, "FullyStowed"), "animated_port_fully_stowed_closes_retracting_capture");
+        Equal(false, DroneCarrierPortLogic.CloseAnimatedPortFullyStowed(7, 6, AnimatedPortMotion.RetractingRelease, "FullyStowed"), "animated_port_fully_stowed_rejects_stale_token");
+        Equal(false, DroneCarrierPortLogic.CloseAnimatedPortFullyStowed(7, 7, AnimatedPortMotion.RetractingRelease, "Locked"), "animated_port_fully_stowed_rejects_wrong_milestone");
+        Equal(false, DroneCarrierPortLogic.CloseAnimatedPortFullyStowed(7, 7, AnimatedPortMotion.ExtendingRelease, "FullyStowed"), "animated_port_fully_stowed_rejects_non_retracting_motion");
+        Equal(30f, DroneCarrierPortLogic.AnimatedCapturePreparationRadius, "animated_capture_preparation_radius");
+        Equal(5f, DroneCarrierPortLogic.AnimatedCaptureRadius, "animated_capture_radius");
+        Equal(20f, DroneCarrierPortLogic.AnimatedCapturePreparationTimeoutSeconds, "animated_capture_preparation_timeout");
+        Equal(true, DroneCarrierPortLogic.IsWithinAnimatedCapturePreparationRadiusSquared(900f), "animated_capture_preparation_boundary_is_inside");
+        Equal(false, DroneCarrierPortLogic.IsWithinAnimatedCapturePreparationRadiusSquared(900.001f), "animated_capture_preparation_outside_is_out_of_range");
+        Equal(true, DroneCarrierPortLogic.IsWithinAnimatedCaptureRadiusSquared(25f), "animated_capture_boundary_is_inside");
+        Equal(false, DroneCarrierPortLogic.IsWithinAnimatedCaptureRadiusSquared(25.001f), "animated_capture_outside_waits");
+        Equal(AnimatedCaptureRecoveryDecision.WaitForCapture, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(26f, 0f, true), "animated_capture_waits_inside_preparation_outside_capture");
+        Equal(AnimatedCaptureRecoveryDecision.BeginLock, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(25f, 19.9f, true), "animated_capture_reaches_capture_radius_begins_lock");
+        Equal(AnimatedCaptureRecoveryDecision.AbortRange, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(901f, 20f, true), "animated_capture_range_abort_precedes_timeout");
+        Equal(AnimatedCaptureRecoveryDecision.AbortTimeout, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(900f, 20f, true), "animated_capture_timeout_at_exact_boundary");
+        Equal(AnimatedCaptureRecoveryDecision.WaitForCapture, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(901f, 20f, false), "animated extending outside range defers");
+        Equal(AnimatedCaptureRecoveryDecision.WaitForCapture, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(900f, 20f, false), "animated extending timeout defers");
+        Equal(900f, DroneCarrierPortLogic.NormalizeAnimatedCaptureSquaredDistance(901f, true), "animated occupied trigger normalizes outside pivot distance");
+        Equal(AnimatedCaptureRecoveryDecision.WaitForCapture, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(
+            DroneCarrierPortLogic.NormalizeAnimatedCaptureSquaredDistance(901f, true), 0f, true), "animated occupied outside five waits for capture");
+        Equal(AnimatedCaptureRecoveryDecision.AbortRange, DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(
+            DroneCarrierPortLogic.NormalizeAnimatedCaptureSquaredDistance(901f, false), 0f, true), "animated unoccupied outside preparation range aborts");
+        AnimatedPortMotion captureMotion = AnimatedPortMotion.ExtendingCapture;
+        Equal(true, DroneCarrierPortLogic.TryEnterAnimatedCaptureWait(9, 9, ref captureMotion, "Extended"), "animated_capture_extended_enters_waiting");
+        Equal(AnimatedPortMotion.WaitingCapture, captureMotion, "animated_capture_waiting_motion_retained");
+        Equal(false, DroneCarrierPortLogic.TryBeginAnimatedCaptureLock(9, 8, ref captureMotion), "animated_capture_stale_token_cannot_lock");
+        Equal(AnimatedPortMotion.WaitingCapture, captureMotion, "animated_capture_stale_token_does_not_advance");
+        captureMotion = AnimatedPortMotion.ExtendingCapture;
+        Equal(false, DroneCarrierPortLogic.TryBeginAnimatedCaptureLock(9, 9, ref captureMotion), "animated_capture_wrong_motion_cannot_lock");
+        Equal(AnimatedPortMotion.ExtendingCapture, captureMotion, "animated_capture_wrong_motion_does_not_advance");
+        captureMotion = AnimatedPortMotion.WaitingCapture;
+        Equal(true, DroneCarrierPortLogic.TryBeginAnimatedCaptureLock(9, 9, ref captureMotion), "animated_capture_waiting_begins_lock_once");
+        Equal(false, DroneCarrierPortLogic.TryBeginAnimatedCaptureLock(9, 9, ref captureMotion), "animated_capture_duplicate_lock_transition_blocked");
+        Equal(AnimatedPortMotion.LockingCapture, captureMotion, "animated_capture_locking_is_one_way");
+
+        RoutingTests();
+        HullCpaTests();
+        Console.WriteLine("Passed " + tests + " logic regression tests.");
+    }
+
+    private static void CapTests()
+    {
+        CapCandidate boundary = new CapCandidate("b", 20000f, 0f, true, true, true, true);
+        Equal(true, CapMissionLogic.IsWithinScope(0f, 0f, boundary.x, boundary.z), "cap inclusive 20 km boundary");
+        Equal(true, CapMissionLogic.IsEligible(boundary), "cap hostile tracked airborne valid candidate");
+        Equal(false, CapMissionLogic.IsEligible(new CapCandidate("x", 1f, 1f, true, true, true, false)), "cap grounded rejects");
+        Equal(false, CapMissionLogic.IsEligible(new CapCandidate("x", 1f, 1f, true, true, false, true)), "cap untracked rejects");
+        CapCandidate nearB = new CapCandidate("b", 10f, 0f, true, true, true, true);
+        CapCandidate nearA = new CapCandidate("a", 10f, 0f, true, true, true, true);
+        Equal(true, CapMissionLogic.IsBetterCandidate(nearA, 0f, 0f, nearB), "cap PID tie break");
+        Equal(true, CapMissionLogic.ShouldKeepTarget(boundary, false, true, 0f, 0f), "cap normal boundary retains");
+        Equal(false, CapMissionLogic.ShouldKeepTarget(new CapCandidate("x", 20001f, 0f, true, true, true, true), false, true, 0f, 0f), "cap normal out of scope clears");
+        Equal(true, CapMissionLogic.ShouldKeepTarget(new CapCandidate("x", 20001f, 0f, true, true, true, true), true, true, 0f, 0f), "cap retaliation retains outside scope");
+        Equal(false, CapMissionLogic.ShouldKeepTarget(boundary, false, false, 0f, 0f), "cap no AAM clears target");
+        Equal(WingmanDesired.Loiter, CapMissionLogic.ResolveDesired(true, false), "cap no target loiters");
+        Equal(WingmanDesired.AirToAir, CapMissionLogic.ResolveDesired(true, true), "cap target enters a2a");
+        Equal(WingmanDesired.Loiter, CapMissionLogic.ResolveDesired(false, true), "cap combat disabled resumes patrol");
+        Equal(true, CombatCommandLogic.ResolveDesired(true, WingmanMission.Cap, true, DroneModeOverride.Auto, true) == WingmanDesired.AirToAir,
+              "cap desired target resolves a2a");
+        Equal(true, CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, true, DroneModeOverride.Auto, true) == WingmanDesired.AirToAir,
+              "explicit a2a invalidation behavior remains distinct");
+    }
+    private static void Equal<T>(T expected, T actual, string name)
+    {
+        tests++;
+        if (!Equals(expected, actual))
+            throw new Exception(name + ": expected " + expected + ", actual " + actual);
+    }
+
+    private static void HullCpaTests()
+    {
+        Equal(true, HullCpaLogic.LaunchClearanceRequired(true, 299f, 500f), "launch clearance current danger");
+        Equal(true, HullCpaLogic.LaunchClearanceRequired(true, 500f, 219f), "launch clearance cpa danger");
+        Equal(false, HullCpaLogic.LaunchClearanceRequired(true, 300f, 220f), "launch clearance exact boundaries clear");
+        Equal(false, HullCpaLogic.LaunchClearanceRequired(true, 301f, 221f), "launch clearance both clear");
+        Equal(false, HullCpaLogic.LaunchClearanceRequired(false, float.NaN, float.PositiveInfinity), "launch clearance unavailable nonfinite clear");
+        bool providerNearMeasured = HullCpaLogic.TryPointVsTranslatingAabb(Vector3.Zero, new Vector3(100f, 0f, 0f),
+            Vector3.Zero, Vector3.Zero, new Vector3(100f, 50f, 100f), 6f, out float providerNearCurrent,
+            out float providerNearCpa, out _);
+        Equal(true, providerNearMeasured && HullCpaLogic.LaunchClearanceRequired(true, providerNearCurrent, providerNearCpa),
+              "provider pose requires launch clearance");
+        bool providerClearMeasured = HullCpaLogic.TryPointVsTranslatingAabb(new Vector3(500f, 0f, 0f),
+            new Vector3(100f, 0f, 0f), Vector3.Zero, Vector3.Zero, new Vector3(100f, 50f, 100f), 6f,
+            out float providerClearCurrent, out float providerClearCpa, out _);
+        Equal(false, providerClearMeasured && HullCpaLogic.LaunchClearanceRequired(true, providerClearCurrent, providerClearCpa),
+              "provider forward egress clears launch clearance");
+        Hull(new Vector3(3, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 2, 0, "hull face stationary");
+        Hull(new Vector3(0, 3, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 2, 0, "hull y face stationary");
+        Hull(new Vector3(0, 0, 3), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 2, 0, "hull z face stationary");
+        Hull(new Vector3(5, 0, 0), new Vector3(-2, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, 4, 0, 2, "hull approach");
+        Hull(new Vector3(2, 0, 0), new Vector3(1, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, 1, 1, 0, "hull recede");
+        Hull(new Vector3(3, 3, 0), new Vector3(-1, -1, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, MathF.Sqrt(8), 0, 2, "hull edge duplicate roots");
+        Hull(new Vector3(3, 3, 3), new Vector3(-1, -1, -1), Vector3.Zero, Vector3.Zero, Vector3.One, 6, MathF.Sqrt(12), 0, 2, "hull corner");
+        Hull(new Vector3(-3, -3, -3), new Vector3(1, 1, 1), Vector3.Zero, Vector3.Zero, Vector3.One, 6, MathF.Sqrt(12), 0, 2, "hull diagonal crossing");
+        Hull(new Vector3(-3, 1, 0), new Vector3(2, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 0, 1, "hull tangent");
+        Hull(Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 6, 0, 0, 0, "hull starts inside");
+        Hull(new Vector3(-3, 0, 0), new Vector3(1, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 0, 2, "hull enters and remains inside earliest boundary");
+        Hull(new Vector3(5, 0, 0), new Vector3(-.5f, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.One, 6, 4, 1, 6, "hull horizon clamp");
+        Hull(new Vector3(3, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 6, 2, 2, 0, "hull zero velocity");
+        Hull(new Vector3(3, 0, 0), new Vector3(-1, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, 6, 3, 0, 3, "hull zero extents point cpa");
+        Hull(new Vector3(3, 2, 0), new Vector3(-1, 0, 0), Vector3.Zero, Vector3.Zero, new Vector3(1, 0, 1), 6, MathF.Sqrt(8), 2, 2, "hull partial extents");
+        Hull(new Vector3(-3, 0, 0), new Vector3(1, 0, 0), Vector3.Zero, Vector3.Zero, new Vector3(1, 0, 0), 6, 2, 0, 2, "hull equal minima earliest time");
+        Vector3 shift = new Vector3(100, -7, 4), shared = new Vector3(30, 2, -1);
+        Hull(new Vector3(5, 0, 0) + shift, new Vector3(-2, 0, 0) + shared, shift, shared, Vector3.One, 6, 4, 0, 2, "hull translation shared velocity invariant");
+        Equal(false, HullCpaLogic.TryPointVsTranslatingAabb(new Vector3(float.NaN, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 1, out _, out _, out _), "hull nan rejects");
+        Equal(false, HullCpaLogic.TryPointVsTranslatingAabb(new Vector3(float.PositiveInfinity, 0, 0), Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, 1, out _, out _, out _), "hull infinity rejects");
+        Equal(false, HullCpaLogic.TryPointVsTranslatingAabb(Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, new Vector3(-1, 0, 0), 1, out _, out _, out _), "hull negative extents rejects");
+        Equal(false, HullCpaLogic.TryPointVsTranslatingAabb(Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.One, float.PositiveInfinity, out _, out _, out _), "hull invalid horizon rejects");
+        Vector3 p = new Vector3(5, 2, -1), v = new Vector3(-1, 0, 0);
+        Equal(true, HullCpaLogic.TryPointVsTranslatingAabb(p, v, Vector3.Zero, Vector3.Zero, Vector3.Zero, 6, out float current, out float cpa, out float time), "point cpa regression succeeds");
+        float oldTime = Math.Clamp(-Vector3.Dot(p, v) / v.LengthSquared(), 0, 6);
+        Near(p.Length(), current, "fq fq point current unchanged"); Near((p + v * oldTime).Length(), cpa, "fq fq point cpa unchanged"); Near(oldTime, time, "fq fq point time unchanged");
+    }
+    private static void Hull(Vector3 point, Vector3 pointVelocity, Vector3 center, Vector3 centerVelocity, Vector3 extents, float horizon, float current, float cpa, float time, string name)
+    {
+        Equal(true, HullCpaLogic.TryPointVsTranslatingAabb(point, pointVelocity, center, centerVelocity, extents, horizon, out float actualCurrent, out float actualCpa, out float actualTime), name + " succeeds");
+        Near(current, actualCurrent, name + " current"); Near(cpa, actualCpa, name + " cpa"); Near(time, actualTime, name + " time");
+    }
+    private static void Near(float expected, float actual, string name)
+    {
+        tests++;
+        if (MathF.Abs(expected - actual) > .0001f) throw new Exception(name + ": expected " + expected + ", actual " + actual);
+    }
+
+    private static void StrikeBombingTests()
+    {
+        string[] ids = { "b", "", "a", "b", "A", null! };
+        string[] sortedIds = StrikeBombingLogic.CopySortDistinctIds(ids);
+        Equal(3, sortedIds.Length, "strike bomb copy removes duplicate and empty ids");
+        Equal("A", sortedIds[0], "strike bomb copy sorts ordinal uppercase first");
+        Equal("a", sortedIds[1], "strike bomb copy sorts ordinal lowercase second");
+        Equal("b", sortedIds[2], "strike bomb copy sorts ordinal final id");
+        Equal(false, ReferenceEquals(ids, sortedIds), "strike bomb copy does not alias input array");
+        ids[0] = "changed";
+        Equal("b", sortedIds[2], "strike bomb copy remains independent after input mutation");
+
+        Equal(true, StrikeBombingLogic.IsBetterTarget(4f, "b", 9f, "a"), "strike bomb nearest target wins");
+        Equal(false, StrikeBombingLogic.IsBetterTarget(9f, "a", 4f, "b"), "strike bomb farther target loses");
+        Equal(true, StrikeBombingLogic.IsBetterTarget(4f, "a", 4f, "b"), "strike bomb ordinal pid breaks tie");
+        Equal(false, StrikeBombingLogic.IsBetterTarget(4f, "b", 4f, "a"), "strike bomb later ordinal pid loses tie");
+        Equal(false, StrikeBombingLogic.IsBetterTarget(float.NaN, "a", 4f, "b"), "strike bomb rejects nan candidate score");
+        Equal(false, StrikeBombingLogic.IsBetterTarget(float.PositiveInfinity, "a", 4f, "b"), "strike bomb rejects infinite candidate score");
+        Equal(false, StrikeBombingLogic.IsBetterTarget(-1f, "a", 4f, "b"), "strike bomb rejects negative candidate score");
+        Equal(true, StrikeBombingLogic.IsBetterTarget(4f, "a", float.NaN, "b"), "strike bomb accepts against nan best score");
+        Equal(true, StrikeBombingLogic.IsBetterTarget(4f, "a", float.PositiveInfinity, "b"), "strike bomb accepts against infinite best score");
+        Equal(true, StrikeBombingLogic.IsBetterTarget(4f, "a", -1f, "b"), "strike bomb accepts against negative best score");
+
+        Equal(StrikeBombStage.BombVolley, StrikeBombingLogic.Advance(StrikeBombStage.BombVolley, true, false, false), "strike bomb ammo holds bomb stage");
+        Equal(StrikeBombStage.BombVolley, StrikeBombingLogic.Advance(StrikeBombStage.BombVolley, false, true, false), "strike bomb Reloading holds bomb stage");
+        Equal(StrikeBombStage.BombVolley, StrikeBombingLogic.Advance(StrikeBombStage.BombVolley, false, false, true), "strike bomb Salvo holds bomb stage");
+        Equal(StrikeBombStage.GlideBombVolley, StrikeBombingLogic.Advance(StrikeBombStage.BombVolley, false, false, false), "strike bomb empty bomb advances glide stage");
+        Equal(StrikeBombStage.GlideBombVolley, StrikeBombingLogic.Advance(StrikeBombStage.GlideBombVolley, true, false, false), "strike bomb ammo holds glide stage");
+        Equal(StrikeBombStage.GlideBombVolley, StrikeBombingLogic.Advance(StrikeBombStage.GlideBombVolley, false, true, false), "strike bomb Reloading holds glide stage");
+        Equal(StrikeBombStage.GlideBombVolley, StrikeBombingLogic.Advance(StrikeBombStage.GlideBombVolley, false, false, true), "strike bomb Salvo holds glide stage");
+        Equal(StrikeBombStage.Complete, StrikeBombingLogic.Advance(StrikeBombStage.GlideBombVolley, false, false, false), "strike bomb empty glide advances complete");
+        Equal(StrikeBombStage.Complete, StrikeBombingLogic.Advance(StrikeBombStage.Complete, true, true, true), "strike bomb terminal stage holds");
+        Equal(true, StrikeBombingLogic.CanAdvanceStage(false, false), "strike bomb inactive lifecycle allows stage advance");
+        Equal(false, StrikeBombingLogic.CanAdvanceStage(true, false), "strike bomb active release blocks stage advance");
+        Equal(false, StrikeBombingLogic.CanAdvanceStage(false, true), "strike bomb active breakoff blocks stage advance");
+        Equal(false, StrikeBombingLogic.CanAdvanceStage(true, true), "strike bomb active release and breakoff block stage advance");
+
+        Equal(StrikeBombWeaponKind.Bomb, StrikeBombingLogic.Classify(true, false, false, false, false, false, false, false, false), "strike bomb accepts bomb");
+        Equal(StrikeBombWeaponKind.GlideBomb, StrikeBombingLogic.Classify(false, true, false, false, false, false, false, false, false), "strike bomb accepts glide bomb");
+        Equal(StrikeBombWeaponKind.Bomb, StrikeBombingLogic.Classify(true, true, false, false, false, false, false, false, false), "strike bomb prefers bomb over glide");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, true, false, false, false, false, false, false), "strike bomb rejects nuclear bomb");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(false, true, true, false, false, false, false, false, false), "strike bomb rejects nuclear glide");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, true, false, false, false, false, false), "strike bomb rejects missile");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, false, true, false, false, false, false), "strike bomb rejects gun");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, false, false, true, false, false, false), "strike bomb rejects laser");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, false, false, false, true, false, false), "strike bomb rejects cargo");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, false, false, false, false, true, false), "strike bomb rejects sling");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(true, false, false, false, false, false, false, false, true), "strike bomb rejects troops");
+        Equal(StrikeBombWeaponKind.None, StrikeBombingLogic.Classify(false, false, false, false, false, false, false, false, false), "strike bomb rejects no payload");
+
+        Equal(true, StrikeBombingLogic.IsBombReleaseWindow(10f, 11f), "strike bomb release window accepts inside boundary");
+        Equal(false, StrikeBombingLogic.IsBombReleaseWindow(10f, 11.5f), "strike bomb release window rejects exact boundary");
+        Equal(true, StrikeBombingLogic.IsBombReleaseWindow(10f, 11.499f), "strike bomb release window accepts just inside boundary");
+        Equal(false, StrikeBombingLogic.IsBombReleaseWindow(float.NaN, 10f), "strike bomb release window rejects non-finite");
+        Equal(StrikeRippleDecision.FireNext, StrikeBombingLogic.ResolveConventionalRipple(true, true, false, 1f, 9f, 10f), "ripple conventional fires one valid target");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.ResolveConventionalRipple(true, false, true, 1f, 9f, 10f), "ripple conventional holds future window");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveConventionalRipple(true, false, false, 1f, 9f, 10f), "ripple conventional breaks after window");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveConventionalRipple(false, true, false, 1f, 9f, 10f), "ripple conventional ready failure breaks");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.PreserveInitialIngress(StrikeRippleDecision.BreakOff, false), "initial conventional break preserves ingress");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.PreserveInitialIngress(StrikeRippleDecision.BreakOff, true), "pending conventional break enters cleanup");
+        Equal(true, StrikeBombingLogic.NativeBombFreshBreakOff(9.999f, 7.999f), "native close guard accepts exact under boundaries");
+        Equal(false, StrikeBombingLogic.NativeBombFreshBreakOff(10f, 7.999f), "native close guard rejects travel boundary");
+        Equal(false, StrikeBombingLogic.NativeBombFreshBreakOff(9.999f, 8f), "native close guard rejects fall boundary");
+        Equal(true, StrikeBombingLogic.ConventionalCloseOffAxis(2000f + 100f * .5f + 50f * 3.6f - .001f, 100f, 50f, 20.001f), "conventional close off-axis accepts strict inside boundary");
+        Equal(false, StrikeBombingLogic.ConventionalCloseOffAxis(2230f, 100f, 50f, 20.001f), "conventional close off-axis rejects range boundary");
+        Equal(false, StrikeBombingLogic.ConventionalCloseOffAxis(2200f, 100f, 50f, 20f), "conventional close off-axis rejects angle boundary");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveConventionalRipple(true, true, false, 0f, 9f, 10f), "pending raw zero projection breaks");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.PreserveInitialIngress(StrikeBombingLogic.ResolveConventionalRipple(true, true, false, 0f, 9f, 10f), false), "initial raw zero projection preserves ingress");
+
+        Equal(true, StrikeBombingLogic.GlideGeometryValid(100f, 100f, false, 21f, 0f, 9f, 10f), "ripple glide geometry valid");
+        Equal(.23f, StrikeBombingLogic.GlideReleaseGradient(20f, 10f, 100f), "glide gradient uses height plus speed term");
+        Equal(false, StrikeBombingLogic.GlideGeometryValid(100f, 100f, false, 20f, 0f, 9f, 10f), "glide gradient exact boundary rejects");
+        Equal("insufficient_gradient", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 20f, 0f, 9f, 10f, true, 6f), "glide gate reports gradient hold");
+        Equal("obscured", StrikeBombingLogic.GlideGateReason(100f, 100f, true, 21f, 0f, 9f, 10f, true, 6f), "glide gate reports obscured hold");
+        Equal("station_not_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, false, 6f), "glide gate reports readiness hold");
+        Equal("glide_spacing", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, 5f), "glide gate reports ripple spacing hold");
+        Equal("fire_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, 5.1f), "glide gate reports ready fire");
+        Equal(StrikeRippleDecision.FireNext, StrikeBombingLogic.ResolveGlideRipple(true, true, 5.1f), "ripple glide fires after interval");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.ResolveGlideRipple(true, true, 5f), "ripple glide only interval waits");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(false, true, 6f), "ripple glide geometry breaks");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(true, false, 6f), "ripple glide readiness breaks");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.PreserveInitialIngress(StrikeRippleDecision.BreakOff, false), "initial glide geometry preserves ingress");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 150f, 100f), "valid initial glide release does not latch");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 100f, 100f), "initial glide range equality does not latch");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 101f, 100f), "initial glide far invalid remains reversible");
+        Equal(true, StrikeBombingLogic.InitialGlideMissedWindow(false, 99.999f, 100f), "initial glide inside minimum range latches");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(true, 99.999f, 100f), "prior glide release does not use initial latch");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 0f, 100f), "initial glide zero distance does not latch");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, float.NaN, 100f), "initial glide nonfinite distance does not latch");
+        Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 99f, float.PositiveInfinity), "initial glide nonfinite minimum range does not latch");
+        Equal(false, StrikeBombingLogic.GlideMissedWindowCanResume(99.999f, 100f), "glide missed-window latch stays below minimum range");
+        Equal(true, StrikeBombingLogic.GlideMissedWindowCanResume(100f, 100f), "glide missed-window latch clears at minimum range");
+        Equal(true, StrikeBombingLogic.GlideMissedWindowCanResume(100.001f, 100f), "glide missed-window latch clears beyond minimum range");
+    }
+
+    private static void MountedDroneLoadoutTests()
+    {
+        Equal(true, MountedDroneLoadoutLogic.TryCandidateValue(2, 10f, 3f, 4, out float candidate), "mounted loadout candidate value accepts native formula");
+        Equal(44f, candidate, "mounted loadout candidate value uses hardpoint count and ammo");
+        Equal(true, MountedDroneLoadoutLogic.TryCandidateValue(3, 5f, 0f, 7, out candidate), "mounted loadout info-null per-round zero accepts");
+        Equal(15f, candidate, "mounted loadout info-null per-round zero value");
+        Equal(true, MountedDroneLoadoutLogic.TryAccumulateCandidateValue(44f, 1, 5f, 0f, 9, out float accumulated), "mounted loadout candidate accumulation accepts");
+        Equal(49f, accumulated, "mounted loadout candidate accumulation totals slots");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(-1, 1f, 1f, 1, out _), "mounted loadout negative hardpoint rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(1, 1f, 1f, -1, out _), "mounted loadout negative ammo rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(1, -1f, 1f, 1, out _), "mounted loadout negative empty cost rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(1, 1f, -1f, 1, out _), "mounted loadout negative round cost rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(1, float.NaN, 1f, 1, out _), "mounted loadout nonfinite cost rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(2, float.MaxValue, 0f, 0, out _), "mounted loadout candidate overflow rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryCandidateValue(1, 0f, float.MaxValue, 2, out _), "mounted loadout per-round ammo overflow rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryAccumulateCandidateValue(float.MaxValue, 1, float.MaxValue, 0f, 0, out _), "mounted loadout accumulation overflow rejects");
+
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 0f, 0f, 0f, out float surcharge, out float delta,
+            out float consumed, out float refunded, out float fundsAfter), "mounted loadout baseline to empty quote accepts");
+        Equal(0f, surcharge, "mounted loadout baseline to empty has no surcharge");
+        Equal(0f, refunded, "mounted loadout baseline to empty has no refund");
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 0f, 150f, 50f, out surcharge, out delta, out consumed,
+            out refunded, out fundsAfter), "mounted loadout surcharge equality funds accepts");
+        Equal(50f, surcharge, "mounted loadout surcharge value");
+        Equal(50f, delta, "mounted loadout surcharge debit delta");
+        Equal(50f, consumed, "mounted loadout debit consumed");
+        Equal(0f, fundsAfter, "mounted loadout debit exact funds after");
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 50f, 150f, 25f, out surcharge, out delta, out consumed,
+            out refunded, out fundsAfter), "mounted loadout no-op economy quote accepts");
+        Equal(50f, surcharge, "mounted loadout no-op surcharge remains paid value");
+        Equal(0f, delta, "mounted loadout no-op delta is zero");
+        Equal(0f, consumed, "mounted loadout no-op consumes nothing");
+        Equal(0f, refunded, "mounted loadout no-op refunds nothing");
+        Equal(25f, fundsAfter, "mounted loadout no-op preserves funds");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(100f, 0f, 150f, 49.999f, out _, out _, out _, out _, out _), "mounted loadout surcharge below funds rejects");
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 50f, 120f, 0f, out surcharge, out delta, out consumed,
+            out refunded, out fundsAfter), "mounted loadout negative delta ignores low funds");
+        Equal(-30f, delta, "mounted loadout negative delta");
+        Equal(0f, consumed, "mounted loadout negative delta consumes nothing");
+        Equal(30f, refunded, "mounted loadout paid surcharge refund only");
+        Equal(30f, fundsAfter, "mounted loadout refund funds after");
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 20f, 0f, 0f, out surcharge, out delta, out consumed,
+            out refunded, out fundsAfter), "mounted loadout paid surcharge empty quote accepts");
+        Equal(20f, refunded, "mounted loadout empty refund never exceeds paid surcharge");
+        Equal(true, MountedDroneLoadoutLogic.TryQuote(100f, 0f, 99f, 0f, out surcharge, out _, out _, out _, out _), "mounted loadout below baseline accepts");
+        Equal(0f, surcharge, "mounted loadout below baseline surcharge remains zero");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(float.PositiveInfinity, 0f, 0f, 0f, out _, out _, out _, out _, out _), "mounted loadout nonfinite baseline rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(-1f, 0f, 0f, 0f, out _, out _, out _, out _, out _), "mounted loadout negative baseline rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(0f, -1f, 0f, 0f, out _, out _, out _, out _, out _), "mounted loadout negative paid rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(0f, float.PositiveInfinity, 0f, 0f, out _, out _, out _, out _, out _), "mounted loadout nonfinite paid rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(0f, 0f, float.NaN, 0f, out _, out _, out _, out _, out _), "mounted loadout nonfinite new value rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(0f, 0f, 0f, -1f, out _, out _, out _, out _, out _), "mounted loadout negative funds rejects");
+        Equal(false, MountedDroneLoadoutLogic.TryQuote(0f, float.MaxValue, 0f, float.MaxValue, out _, out _, out _, out _, out _), "mounted loadout refund funds-after overflow rejects");
+
+        Equal(true, MountedDroneLoadoutLogic.TryNormalizeKey(null, out string key), "mounted loadout null key normalizes");
+        Equal("", key, "mounted loadout null key canonicalizes empty");
+        Equal(true, MountedDroneLoadoutLogic.TryNormalizeKey("", out key), "mounted loadout empty key normalizes");
+        Equal(false, MountedDroneLoadoutLogic.TryNormalizeKey(" \t", out _), "mounted loadout whitespace key rejects");
+        Equal(true, MountedDroneLoadoutLogic.TryNormalizeKey(" Key ", out key), "mounted loadout nonempty key preserves whitespace");
+        Equal(" Key ", key, "mounted loadout key does not trim");
+        Equal(false, MountedDroneLoadoutLogic.IsAmbiguousDuplicateKey("Key", "key", true), "mounted loadout ordinal case mismatch is distinct");
+        Equal(true, MountedDroneLoadoutLogic.IsAmbiguousDuplicateKey("Key", "Key", true), "mounted loadout duplicate different mount signals ambiguity");
+        Equal(false, MountedDroneLoadoutLogic.IsAmbiguousDuplicateKey("Key", "Key", false), "mounted loadout duplicate same mount is not ambiguous");
+        Equal(true, MountedDroneLoadoutLogic.TrySnapshotLegalKeys(new string?[] { "b", "", "a", "b", null }, out string[] keys), "mounted loadout legal key snapshot accepts");
+        Equal(3, keys.Length, "mounted loadout legal key snapshot deduplicates");
+        Equal("", keys[0], "mounted loadout legal key snapshot empty first");
+        Equal("a", keys[1], "mounted loadout legal key snapshot ordinal sorts first key");
+        Equal("b", keys[2], "mounted loadout legal key snapshot ordinal sorts second key");
+        Equal(false, MountedDroneLoadoutLogic.TrySnapshotLegalKeys(new string?[] { " " }, out _), "mounted loadout legal whitespace key rejects");
+
+        Equal(true, MountedDroneLoadoutLogic.SlotCountMatches(2, 2), "mounted loadout exact slot count accepts");
+        Equal(false, MountedDroneLoadoutLogic.SlotCountMatches(2, 1), "mounted loadout slot mismatch rejects");
+        Equal(true, MountedDroneLoadoutLogic.RevisionMatches(0, 0), "mounted loadout zero revision matches");
+        Equal(false, MountedDroneLoadoutLogic.RevisionMatches(1, 0), "mounted loadout stale revision rejects");
+        Equal(true, MountedDroneLoadoutLogic.TryNextRevision(0, true, out long revision), "mounted loadout successful no-op apply advances revision");
+        Equal(1L, revision, "mounted loadout successful no-op next revision");
+        Equal(false, MountedDroneLoadoutLogic.TryNextRevision(1, false, out revision), "mounted loadout failed apply does not advance revision");
+        Equal(1L, revision, "mounted loadout failed apply leaves revision unchanged");
+        Equal(false, MountedDroneLoadoutLogic.TryNextRevision(long.MaxValue, true, out revision), "mounted loadout revision overflow rejects");
+        Equal(long.MaxValue, revision, "mounted loadout revision overflow leaves revision unchanged");
+    }
+
+    private static void CasTests()
+    {
+        Equal(true, CasMissionLogic.IsCasTargetCategory(true, false, false, false), "cas accepts GroundVehicle category");
+        Equal(true, CasMissionLogic.IsCasTargetCategory(false, true, false, false), "cas accepts Building category");
+        Equal(true, CasMissionLogic.IsCasTargetCategory(false, false, true, false), "cas accepts grounded Aircraft category");
+        Equal(true, CasMissionLogic.IsCasTargetCategory(false, false, true, false), "cas accepts taxi Aircraft category");
+        Equal(false, CasMissionLogic.IsCasTargetCategory(false, false, true, true), "cas rejects airborne Aircraft category");
+        Equal(false, CasMissionLogic.IsCasTargetCategory(false, false, false, false), "cas rejects unknown category");
+        Equal(false, CasMissionLogic.IsCasTargetCategory(false, false, true, true),
+              "cas takeoff false-to-true transition invalidates grounded-aircraft category");
+        Equal(true, CasMissionLogic.IsWithinSearchRadius(0f, 0f, 5000f, 0f), "cas includes exact 5 km radius");
+        Equal(false, CasMissionLogic.IsWithinSearchRadius(0f, 0f, 5000.01f, 0f), "cas excludes beyond 5 km radius");
+        Equal(true, CasMissionLogic.IsWithinSearchRadius(10f, 20f, 10f, 20f), "cas radius uses horizontal coordinates only");
+        Equal(false, CasMissionLogic.IsWithinSearchRadius(float.NaN, 0f, 0f, 0f), "cas rejects non-finite center x");
+        Equal(false, CasMissionLogic.IsWithinSearchRadius(0f, float.PositiveInfinity, 0f, 0f), "cas rejects non-finite center z");
+        Equal(false, CasMissionLogic.IsWithinSearchRadius(0f, 0f, float.NaN, 0f), "cas rejects non-finite candidate x");
+        Equal(false, CasMissionLogic.IsWithinSearchRadius(0f, 0f, 0f, float.PositiveInfinity), "cas rejects non-finite candidate z");
+
+        Equal(true, CasMissionLogic.IsBetterCandidate(4f, "b", 9f, "a"), "cas nearest candidate wins");
+        Equal(false, CasMissionLogic.IsBetterCandidate(9f, "a", 4f, "b"), "cas farther candidate loses");
+        Equal(true, CasMissionLogic.IsBetterCandidate(4f, "a", 4f, "b"), "cas ordinal pid breaks distance tie");
+        Equal(false, CasMissionLogic.IsBetterCandidate(4f, "b", 4f, "a"), "cas later ordinal pid loses distance tie");
+        Equal(false, CasMissionLogic.IsBetterCandidate(float.NaN, "a", 4f, "b"), "cas nan candidate score loses");
+        Equal(false, CasMissionLogic.IsBetterCandidate(float.PositiveInfinity, "a", 4f, "b"), "cas infinite candidate score loses");
+        Equal(true, CasMissionLogic.IsBetterCandidate(4f, "a", float.NaN, "b"), "cas finite candidate replaces nan best score");
+
+        Equal(CasAttackStage.AgmVolley, CasMissionLogic.Advance(CasAttackStage.AgmVolley, true, false, false, false), "cas agm ammo holds stage");
+        Equal(CasAttackStage.AgmVolley, CasMissionLogic.Advance(CasAttackStage.AgmVolley, false, true, false, false), "cas agm Reloading holds stage");
+        Equal(CasAttackStage.AgmVolley, CasMissionLogic.Advance(CasAttackStage.AgmVolley, false, false, true, false), "cas agm Salvo holds stage");
+        Equal(CasAttackStage.LaserVolley, CasMissionLogic.Advance(CasAttackStage.AgmVolley, false, false, false, false), "cas empty agm advances laser");
+        Equal(CasAttackStage.LaserVolley, CasMissionLogic.Advance(CasAttackStage.LaserVolley, true, false, false, false), "cas laser ammo holds stage");
+        Equal(CasAttackStage.LaserVolley, CasMissionLogic.Advance(CasAttackStage.LaserVolley, false, true, false, false), "cas laser Reloading holds stage");
+        Equal(CasAttackStage.LaserVolley, CasMissionLogic.Advance(CasAttackStage.LaserVolley, false, false, true, false), "cas laser Salvo holds stage");
+        Equal(CasAttackStage.LaserVolley, CasMissionLogic.Advance(CasAttackStage.LaserVolley, false, false, false, true), "cas pending laser holds stage");
+        Equal(CasAttackStage.FixedGunVolley, CasMissionLogic.Advance(CasAttackStage.LaserVolley, false, false, false, false), "cas empty laser advances fixed gun");
+        Equal(CasAttackStage.FixedGunVolley, CasMissionLogic.Advance(CasAttackStage.FixedGunVolley, true, false, false, false), "cas fixed gun ammo holds stage");
+        Equal(CasAttackStage.FixedGunVolley, CasMissionLogic.Advance(CasAttackStage.FixedGunVolley, false, true, false, false), "cas fixed gun Reloading holds stage");
+        Equal(CasAttackStage.FixedGunVolley, CasMissionLogic.Advance(CasAttackStage.FixedGunVolley, false, false, true, false), "cas fixed gun Salvo holds stage");
+        Equal(CasAttackStage.SupportOrComplete, CasMissionLogic.Advance(CasAttackStage.FixedGunVolley, false, false, false, true), "cas empty fixed gun advances support");
+        Equal(CasAttackStage.SupportOrComplete, CasMissionLogic.Advance(CasAttackStage.SupportOrComplete, true, true, true, true), "cas terminal stage holds");
+
+        Equal(true, CasMissionLogic.FixedGunRequestAllowed(false, false, true, false, true), "cas ready safe gun allows initial request");
+        Equal(true, CasMissionLogic.FixedGunRequestAllowed(false, false, true, false, true), "cas ready safe gun allows repeated request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(true, false, true, false, true), "cas reloading gun denies initial request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(true, false, true, false, true), "cas reloading gun denies repeated request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, true, true, false, true), "cas salvo gun denies initial request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, true, true, false, true), "cas salvo gun denies repeated request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, false, false, true), "cas unready gun denies initial request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, false, false, true), "cas unready gun denies repeated request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, true, true, true), "cas safe-on gun denies initial request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, true, true, true), "cas safe-on gun denies repeated request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, true, false, false), "cas unsafe station denies initial request");
+        Equal(false, CasMissionLogic.FixedGunRequestAllowed(false, false, true, false, false), "cas unsafe station denies repeated request");
+
+        Equal(CasWeaponKind.Agm, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, 1f, 0), "cas accepts optical los agm");
+        Equal(CasWeaponKind.LaserRocket, CasMissionLogic.Classify(false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, 1f, 0), "cas accepts non-missile laser rocket");
+        Equal(CasWeaponKind.FixedGun, CasMissionLogic.Classify(false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, 0f, 0), "cas accepts zero anti-surface fixed boresight gun");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, 0f, 0), "cas rejects zero anti-surface");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, true, false, true, false, false, 1f, 0), "cas rejects arm");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, 1f, 0), "cas rejects optical cruise");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, 1f, 0), "cas rejects optical without los");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, true, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects ir");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, false, true, false, false, true, false, true, false, false, 1f, 0), "cas rejects arh");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, true, false, false, false, false, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects bomb");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, true, false, false, false, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects glide bomb");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, true, false, false, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects cargo");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, true, false, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects sling");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(true, false, false, false, false, false, false, true, false, false, false, true, false, true, false, false, 1f, 0), "cas rejects troops");
+        Equal(CasWeaponKind.FixedGun, CasMissionLogic.Classify(false, true, true, false, false, false, false, false, true, true, true, true, true, false, true, true, 0f, 1), "cas accepts turreted fixed gun despite unrelated seeker flags");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 1f, 0), "cas rejects non-boresight gun");
+        Equal(CasWeaponKind.None, CasMissionLogic.Classify(false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, 0f, 0), "cas rejects boresight non-gun");
+        Equal(CasWeaponKind.FixedGun, CasMissionLogic.Classify(true, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, 0f, 0), "cas accepts missile-flagged fixed gun");
+        Equal(CasWeaponKind.FixedGun, CasMissionLogic.Classify(false, true, true, false, false, false, false, false, false, false, false, false, false, false, true, true, 0f, 0), "cas accepts seeker-flagged fixed gun");
+    }
+
+    private static void SeadTests()
+    {
+        // Classify(missile, gun, bomb, glide, cargo, sling, troops, IR, ARH, ARM, optical, LOS, cruise, laserGuided, laserSeeker)
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(false, false, false, false, false, false, false, false, false, false, false, false, false, false, false), "sead rejects non-missile");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, true, false, false, false, false, false, false, false, true, false, false, false, false, false), "sead rejects gun");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, true, false, false, false, false, false, false, true, false, false, false, false, false), "sead rejects bomb");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, true, false, false, false, false, false, true, false, false, false, false, false), "sead rejects glide bomb");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, true, false, false, false, false, true, false, false, false, false, false), "sead rejects cargo");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, true, false, false, false, true, false, false, false, false, false), "sead rejects sling");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, true, false, false, true, false, false, false, false, false), "sead rejects troops");
+
+        Equal(SeadWeaponKind.Arm, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, true, false, false, false, false, false), "sead accepts arm");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, true, true, false, false, false, false), "sead rejects arm optical conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, true, false, true, false, false, false, false, false), "sead rejects arm ir conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, true, true, false, false, false, false, false), "sead rejects arm arh conflict");
+
+        Equal(SeadWeaponKind.Agm, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, true, false, false, false), "sead accepts optical los agm");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, false, false, false, false), "sead rejects agm without los");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, true, true, false, false), "sead rejects cruise agm");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, true, false, true, true), "sead rejects laser agm");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, true, true, true, false, false, false), "sead rejects arm agm conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, true, false, false, true, true, false, false, false), "sead rejects ir agm conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, true, false, true, true, false, false, false), "sead rejects arh agm conflict");
+
+        Equal(SeadWeaponKind.LaserRocket, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, false, false, true, true), "sead accepts laser rocket");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, false, false, true, false), "sead rejects laser without seeker");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, true, false, false, false, true, true), "sead rejects arm laser conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, true, true, false, true, true), "sead rejects optical laser conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, false, false, false, false, true, true, true), "sead rejects cruise laser");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, true, false, false, false, false, false, true, true), "sead rejects ir laser conflict");
+        Equal(SeadWeaponKind.None, SeadMissionLogic.Classify(true, false, false, false, false, false, false, false, true, false, false, false, false, true, true), "sead rejects arh laser conflict");
+
+        Equal(SeadAttackStage.ArmVolley, SeadMissionLogic.Advance(SeadAttackStage.ArmVolley, true, true, 0, false), "active radar arm ammo holds arm stage");
+        Equal(SeadAttackStage.AgmVolley, SeadMissionLogic.Advance(SeadAttackStage.ArmVolley, false, true, 0, false), "dark radar advances arm stage");
+        Equal(SeadAttackStage.AgmVolley, SeadMissionLogic.Advance(SeadAttackStage.ArmVolley, true, false, 0, false), "empty arm advances agm stage");
+        Equal(SeadAttackStage.AgmVolley, SeadMissionLogic.Advance(SeadAttackStage.AgmVolley, false, true, 0, false), "agm ammo holds agm stage");
+        Equal(SeadAttackStage.LaserVolley, SeadMissionLogic.Advance(SeadAttackStage.AgmVolley, true, false, 0, false), "empty agm advances laser stage");
+        Equal(SeadAttackStage.LaserVolley, SeadMissionLogic.Advance(SeadAttackStage.LaserVolley, false, false, 1, false), "laser ammo holds laser stage");
+        Equal(SeadAttackStage.LaserVolley, SeadMissionLogic.Advance(SeadAttackStage.LaserVolley, false, false, 0, true), "pending laser holds laser stage");
+        Equal(SeadAttackStage.SupportOrComplete, SeadMissionLogic.Advance(SeadAttackStage.LaserVolley, false, false, 0, false), "empty idle laser advances support stage");
+        Equal(SeadAttackStage.SupportOrComplete, SeadMissionLogic.Advance(SeadAttackStage.SupportOrComplete, true, true, 99, true), "support remains support stage");
+        Equal(true, SeadMissionLogic.LaserSupportOwns(false, 1), "active sead laser owns support");
+        Equal(true, SeadMissionLogic.LaserSupportOwns(true, 0), "pending sead laser owns support");
+        Equal(false, SeadMissionLogic.LaserSupportOwns(false, 0), "no sead laser releases support");
+    }
+
+    private static void Throws<T>(Action action, string name) where T : Exception
+    {
+        tests++;
+        try { action(); }
+        catch (T) { return; }
+        throw new Exception(name + ": expected " + typeof(T).Name);
+    }
+
+    private static void RoutingTests()
+    {
+        var index = new SessionRoutingIndex<object>();
+        object ownerA = new object();
+        object ownerB = new object();
+        Equal(true, index.TryGetOrCreate(ownerA, out uint sessionA, out bool created, out string reason), "routing creates A");
+        Equal(1u, sessionA, "routing IDs start at one");
+        Equal(true, created, "routing A is created");
+        Equal("", reason, "routing creation reason empty");
+        Equal(true, index.TryGetOrCreate(ownerB, out uint sessionB, out created, out reason), "routing creates B");
+        Equal(2u, sessionB, "routing IDs are monotonic");
+        Equal(true, index.TryGetOrCreate(ownerA, out uint duplicateA, out created, out reason), "routing duplicate owner returns");
+        Equal(sessionA, duplicateA, "routing duplicate owner ID");
+        Equal(false, created, "routing duplicate owner is not created");
+        Equal("", reason, "routing duplicate reason empty");
+
+        var equalOwners = new SessionRoutingIndex<EqualOwner>();
+        var equalA = new EqualOwner(7);
+        var equalB = new EqualOwner(7);
+        equalOwners.TryGetOrCreate(equalA, out uint equalSessionA, out _, out _);
+        equalOwners.TryGetOrCreate(equalB, out uint equalSessionB, out _, out _);
+        Equal(1u, equalSessionA, "routing reference owner first ID");
+        Equal(2u, equalSessionB, "routing equal values have distinct reference owners");
+
+        Equal(true, index.TryRemoveSession(sessionA, out object removedA), "routing removes A");
+        Equal(ownerA, removedA, "routing remove returns owner");
+        Equal(true, index.TryGetOrCreate(new object(), out uint sessionC, out _, out _), "routing creates after remove");
+        Equal(3u, sessionC, "routing removed ID is not reused");
+        Equal(false, index.TryRemoveSession(sessionA, out _), "routing unknown remove rejects");
+
+        var maxIndex = new SessionRoutingIndex<object>(uint.MaxValue);
+        object maxOwner = new object();
+        Equal(true, maxIndex.TryGetOrCreate(maxOwner, out uint maxSession, out created, out reason), "routing max ID allocates once");
+        Equal(uint.MaxValue, maxSession, "routing max ID value");
+        Equal(false, maxIndex.TryGetOrCreate(new object(), out uint exhaustedId, out created, out reason), "routing exhaustion rejects new owner");
+        Equal(0u, exhaustedId, "routing exhaustion has no ID");
+        Equal("session_id_exhausted", reason, "routing exhaustion reason");
+        Equal(true, maxIndex.TryGetOrCreate(maxOwner, out uint existingMax, out created, out reason), "routing exhaustion preserves owner lookup");
+        Equal(uint.MaxValue, existingMax, "routing exhaustion existing ID");
+        Equal(false, created, "routing exhaustion existing is not created");
+        Throws<ArgumentOutOfRangeException>(() => new SessionRoutingIndex<object>(0), "routing zero first ID rejects");
+
+        Equal(true, index.TryAttachDrone(sessionB, 20, out reason), "routing attaches B drone");
+        Equal(true, index.TryAttachDrone(sessionC, 10, out reason), "routing attaches C drone");
+        Equal(true, index.TryResolveDrone(20, out uint resolvedSession), "routing resolves attached drone");
+        Equal(sessionB, resolvedSession, "routing resolve has source session");
+        Equal(false, index.TryResolveDrone(999, out _), "routing unknown drone does not resolve");
+        Equal(false, index.TryAttachDrone(sessionB, 0, out reason), "routing zero drone rejects");
+        Equal("invalid_drone_pid", reason, "routing zero drone reason");
+        Equal(false, index.TryAttachDrone(999, 30, out reason), "routing unknown attach session rejects");
+        Equal("unknown_session", reason, "routing unknown attach session reason");
+        Equal(false, index.TryAttachDrone(sessionB, 20, out reason), "routing same-session duplicate rejects");
+        Equal("drone_already_attached", reason, "routing same-session duplicate reason");
+        Equal(false, index.TryAttachDrone(sessionC, 20, out reason), "routing cross-session duplicate rejects");
+        Equal("drone_already_attached", reason, "routing cross-session duplicate reason");
+        EqualArray(new uint[] { 20 }, index.SnapshotDronePids(sessionB), "routing duplicate leaves B index unchanged");
+        EqualArray(new uint[] { 10 }, index.SnapshotDronePids(sessionC), "routing duplicate leaves C index unchanged");
+        Equal(false, index.TryDetachDrone(sessionC, 20, out reason), "routing wrong-source detach rejects");
+        Equal("wrong_session", reason, "routing wrong-source detach reason");
+        Equal(false, index.TryDetachDrone(sessionB, 999, out reason), "routing unknown detach rejects");
+        Equal("unknown_drone", reason, "routing unknown detach reason");
+        Equal(true, index.TryDetachDrone(sessionB, 20, out reason), "routing detach source succeeds");
+        Equal(true, index.TryAttachDrone(sessionC, 20, out reason), "routing detached drone attaches target");
+        Equal(true, index.TryResolveDrone(20, out resolvedSession), "routing transferred drone resolves");
+        Equal(sessionC, resolvedSession, "routing transferred drone has only target owner");
+
+        Equal(true, index.TryAttachDrone(sessionB, 40, out _), "routing attaches B cleanup drone");
+        Equal(true, index.TryAttachDrone(sessionC, 30, out _), "routing attaches C cleanup drone");
+        Equal(true, index.TryRemoveSession(sessionC, out _), "routing removes C with drones");
+        Equal(false, index.TryResolveDrone(10, out _), "routing remove clears C first drone");
+        Equal(false, index.TryResolveDrone(20, out _), "routing remove clears C transferred drone");
+        Equal(false, index.TryResolveDrone(30, out _), "routing remove clears C second drone");
+        Equal(true, index.TryResolveDrone(40, out resolvedSession), "routing remove preserves B drone");
+        Equal(sessionB, resolvedSession, "routing preserved B drone source");
+        EqualArray(new uint[] { 2 }, index.SnapshotSessionIds(), "routing session snapshot sorted");
+        EqualArray(new uint[] { 40 }, index.SnapshotDronePids(sessionB), "routing drone snapshot sorted");
+        EqualArray(Array.Empty<uint>(), index.SnapshotDronePids(999), "routing unknown drone snapshot empty");
+
+        var sortedIndex = new SessionRoutingIndex<object>();
+        object sortedOwnerA = new object();
+        object sortedOwnerB = new object();
+        sortedIndex.TryGetOrCreate(sortedOwnerA, out uint sortedA, out _, out _);
+        sortedIndex.TryGetOrCreate(sortedOwnerB, out uint sortedB, out _, out _);
+        sortedIndex.TryAttachDrone(sortedA, 9, out _);
+        sortedIndex.TryAttachDrone(sortedA, 2, out _);
+        sortedIndex.TryAttachDrone(sortedA, 5, out _);
+        EqualArray(new uint[] { 1, 2 }, sortedIndex.SnapshotSessionIds(), "routing session snapshot ascending");
+        EqualArray(new uint[] { 2, 5, 9 }, sortedIndex.SnapshotDronePids(sortedA), "routing drone snapshot ascending");
+        Equal(true, sortedIndex.TryGetByOwner(sortedOwnerB, out uint lookupSession), "routing owner lookup");
+        Equal(sortedB, lookupSession, "routing owner lookup session");
+        Equal(true, sortedIndex.TryGetOwner(sortedA, out object lookupOwner), "routing session reverse lookup");
+        Equal(sortedOwnerA, lookupOwner, "routing session reverse lookup owner");
+        Equal(false, sortedIndex.TryGetByOwner(new object(), out _), "routing unknown owner lookup");
+        Equal(false, sortedIndex.TryGetOwner(999, out _), "routing unknown session lookup");
+        sortedIndex.Clear();
+        Equal(0, sortedIndex.SessionCount, "routing clear removes sessions");
+        Equal(false, sortedIndex.TryResolveDrone(2, out _), "routing clear removes drone routes");
+        EqualArray(Array.Empty<uint>(), sortedIndex.SnapshotSessionIds(), "routing clear session snapshot empty");
+        Equal(true, sortedIndex.TryGetOrCreate(new object(), out uint afterClear, out _, out _), "routing creates after clear");
+        Equal(3u, afterClear, "routing clear does not reset allocator");
+    }
+
+    private static void EqualArray(uint[] expected, uint[] actual, string name)
+    {
+        tests++;
+        if (expected.Length != actual.Length)
+            throw new Exception(name + ": expected length " + expected.Length + ", actual " + actual.Length);
+        for (int i = 0; i < expected.Length; i++)
+            if (expected[i] != actual[i])
+                throw new Exception(name + ": expected " + expected[i] + " at " + i + ", actual " + actual[i]);
+    }
+
+    private sealed class EqualOwner
+    {
+        private readonly int value;
+
+        internal EqualOwner(int value) => this.value = value;
+
+        public override bool Equals(object? obj) => obj is EqualOwner other && other.value == value;
+
+        public override int GetHashCode() => value;
+    }
+
+    private static MapAmmoInput Ammo(bool nuclear = false, bool glide = false, bool bomb = false, bool gun = false,
+                                     bool cargo = false, bool sling = false, bool troops = false, bool arm = false,
+                                     bool ash = false, bool agm = false, bool lineOfSight = true, bool laserGuided = false, bool laserSeeker = false,
+                                     bool ir = false, bool arh = false, string? seeker = null, int ammo = 1,
+                                     bool jammer = false) =>
+        new MapAmmoInput(nuclear, glide, bomb, gun, cargo, sling, troops, arm, ash, agm, lineOfSight, laserGuided, laserSeeker,
+                         ir, arh, seeker, ammo, jammer);
+}

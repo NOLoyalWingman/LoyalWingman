@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <BaseIntermediateOutputPath>$([System.IO.Path]::GetTempPath())LoyalWingmanLogicTests\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\MissileDefenseLogic.cs" Link="MissileDefenseLogic.cs" />
+    <Compile Include="..\..\CombatCommandLogic.cs" Link="CombatCommandLogic.cs" />
+    <Compile Include="..\..\CapMissionLogic.cs" Link="CapMissionLogic.cs" />
+    <Compile Include="..\..\LoiterCommandLogic.cs" Link="LoiterCommandLogic.cs" />
+    <Compile Include="..\..\WingmanLoadoutLogic.cs" Link="WingmanLoadoutLogic.cs" />
+    <Compile Include="..\..\StrikeMissionLogic.cs" Link="StrikeMissionLogic.cs" />
+    <Compile Include="..\..\StrikeBombingLogic.cs" Link="StrikeBombingLogic.cs" />
+    <Compile Include="..\..\SeadMissionLogic.cs" Link="SeadMissionLogic.cs" />
+    <Compile Include="..\..\CasMissionLogic.cs" Link="CasMissionLogic.cs" />
+    <Compile Include="..\..\RtbCancellationLogic.cs" Link="RtbCancellationLogic.cs" />
+    <Compile Include="..\..\FqCradleLoadoutLogic.cs" Link="FqCradleLoadoutLogic.cs" />
+    <Compile Include="..\..\MapAmmoLogic.cs" Link="MapAmmoLogic.cs" />
+    <Compile Include="..\..\WingmanGroupLogic.cs" Link="WingmanGroupLogic.cs" />
+    <Compile Include="..\..\SessionRoutingIndex.cs" Link="SessionRoutingIndex.cs" />
+    <Compile Include="..\..\CradleReleaseProgressionLogic.cs" Link="CradleReleaseProgressionLogic.cs" />
+    <Compile Include="..\..\MultiplayerCleanupLogic.cs" Link="MultiplayerCleanupLogic.cs" />
+    <Compile Include="..\..\TakeControlAdmissionLogic.cs" Link="TakeControlAdmissionLogic.cs" />
+    <Compile Include="..\..\DroneCarrierPortLogic.cs" Link="DroneCarrierPortLogic.cs" />
+    <Compile Include="..\..\HullCpaLogic.cs" Link="HullCpaLogic.cs" />
+    <Compile Include="..\..\AircraftSwitchLogic.cs" Link="AircraftSwitchLogic.cs" />
+    <Compile Include="..\..\MountedDroneLoadoutLogic.cs" Link="MountedDroneLoadoutLogic.cs" />
+    <Compile Include="Program.cs.txt" Link="Program.cs" />
+  </ItemGroup>
+</Project>
