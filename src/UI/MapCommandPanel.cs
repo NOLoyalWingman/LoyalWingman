@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -111,9 +112,9 @@ internal sealed class MapCommandPanel
             !Ui.IsDestroyed(current) && !Ui.IsDestroyed(currentUi)) return;
         UnbindMap(); DestroyUi(); map = current; gameplay = currentUi;
         if (map == null || gameplay == null) return;
-        entrySlot = Ui.BindEntrySlot(gameplay);
+        entrySlot = Ui.BindEntrySlot(gameplay, log, out string bindReason);
         BindMapRelay();
-        if (entrySlot == null) log("state=map_panel_entry_unavailable reason=left_button_4_missing");
+        if (entrySlot == null) log("state=map_panel_entry_unavailable reason=" + bindReason);
         else if (!EnsureUi()) log("state=map_panel_entry_unavailable reason=left_screen_3_install_failed");
     }
     private void UnbindMap()
@@ -244,8 +245,8 @@ internal sealed class MapCommandPanel
     private bool EnsureUi()
     {
         if (root != null) return true; if (gameplay == null) return false;
-        if (!Ui.CaptureTextStyle(gameplay, log)) return false;
-        if (!Ui.CapturePalette(gameplay, log, out hudGreen, out _)) return false;
+        if (!Ui.CaptureTextStyle(entrySlot!, gameplay, log)) return false;
+        if (!Ui.CapturePalette(entrySlot!, log, out hudGreen, out _)) return false;
         rowColor = new Color(0f, 0f, 0f, .55f);
         raisedColor = new Color(0f, 0f, 0f, .68f); buttonColor = new Color(0f, 0f, 0f, .55f);
         disabledBackground = new Color(0f, 0f, 0f, .30f);
@@ -1420,7 +1421,6 @@ internal sealed class MapCommandPanel
     private static class Ui
     {
         private static readonly Type ImageType = Require("UnityEngine.UI.Image, UnityEngine.UI"),
-                                     TextType = Require("UnityEngine.UI.Text, UnityEngine.UI"),
                                      ButtonType = Require("UnityEngine.UI.Button, UnityEngine.UI"),
                                      CanvasType = Require("UnityEngine.Canvas, UnityEngine.UIModule");
         private static readonly Type InputType = Require("UnityEngine.Input, UnityEngine.InputLegacyModule");
@@ -1436,6 +1436,7 @@ internal sealed class MapCommandPanel
             new[] { typeof(RectTransform), typeof(Vector2), typeof(Camera) }, null)!;
         private static readonly Dictionary<string, PropertyInfo> Properties = new Dictionary<string, PropertyInfo>();
         private static object? sharedTextStyle;
+        private static Type? activeTextType;
 
         internal sealed class Element
         {
@@ -1459,6 +1460,7 @@ internal sealed class MapCommandPanel
         internal sealed class EntrySlot : IDisposable
         {
             internal readonly RectTransform rect;
+            internal readonly int slotIndex;
             private readonly GameObject gameObject;
             private readonly Component button, text, highlight, mfd;
             private readonly System.Collections.IList leftScreens;
@@ -1469,22 +1471,28 @@ internal sealed class MapCommandPanel
             private GameObject? displayPanel;
             private bool overridden, installed;
             internal EntrySlot(GameObject o, RectTransform rect, Component button, Component text, Component highlight,
-                               Component mfd, System.Collections.IList leftScreens)
+                               Component mfd, System.Collections.IList leftScreens, int slotIndex)
             {
                 gameObject = o;
                 this.rect = rect;
+                this.slotIndex = slotIndex;
                 this.button = button;
                 this.text = text;
                 this.highlight = highlight;
                 this.mfd = mfd;
-                // LW temporarily owns the native fourth left-screen slot and restores its original MFDScreen on release.
+                // LW temporarily owns the verified serialized left-screen slot and restores its original MFDScreen on release.
                 this.leftScreens = leftScreens;
-                originalScreen = leftScreens[3];
+                originalScreen = leftScreens[slotIndex];
                 originalLabel = (string?)Get(text, "text") ?? "";
                 originalEnabled = (bool)(Get(button, "enabled") ?? false);
                 originalInteractable = (bool)(Get(button, "interactable") ?? false);
                 originalActive = o.activeSelf;
             }
+            internal Component TextComponent => text;
+            internal Component HighlightComponent => highlight;
+            internal string SlotPath => ScenePath(gameObject.transform);
+            internal string TextPath => ScenePath(text.transform);
+            internal string HighlightPath => ScenePath(highlight.transform);
             internal bool ApplyTargetPanelStyle(Element target, Action<string> log)
             {
                 var rightScreens = (System.Collections.IList)typeof(VirtualMFD).GetField("rightScreens", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(mfd)!;
@@ -1523,10 +1531,10 @@ internal sealed class MapCommandPanel
             {
                 if (enabled)
                 {
-                    if (screen == null || leftScreens.Count <= 3 || !Same(leftScreens[3], originalScreen) && !Same(leftScreens[3], screen))
+                    if (screen == null || leftScreens.Count <= slotIndex || !Same(leftScreens[slotIndex], originalScreen) && !Same(leftScreens[slotIndex], screen))
                         return;
-                    if (!Same(leftScreens[3], screen))
-                        leftScreens[3] = screen;
+                    if (!Same(leftScreens[slotIndex], screen))
+                        leftScreens[slotIndex] = screen;
                     screen.GetType().GetMethod("Setup")!.Invoke(screen, new object[] { mfd, "LW" });
                     installed = true;
                     if (mapOpen) gameObject.SetActive(true);
@@ -1547,7 +1555,7 @@ internal sealed class MapCommandPanel
                 else if (overridden)
                     Restore();
             }
-            internal bool IsScreenActive => installed && screen != null && leftScreens.Count > 3 && Same(leftScreens[3], screen) &&
+            internal bool IsScreenActive => installed && screen != null && leftScreens.Count > slotIndex && Same(leftScreens[slotIndex], screen) &&
                                           (bool)(Field(screen.GetType(), "isActive").GetValue(screen) ?? false) && displayPanel != null && displayPanel.activeSelf;
             private void Restore()
             {
@@ -1565,8 +1573,8 @@ internal sealed class MapCommandPanel
                             if (Same(active.GetValue(mfd), screen)) active.SetValue(mfd, null);
                         });
                     }
-                    if (leftScreens.Count > 3 && Same(leftScreens[3], screen))
-                        leftScreens[3] = IsAlive(originalScreen) ? originalScreen : null;
+                    if (leftScreens.Count > slotIndex && Same(leftScreens[slotIndex], screen))
+                        leftScreens[slotIndex] = IsAlive(originalScreen) ? originalScreen : null;
                 }
                 if (IsAlive(highlight)) TryRestore(() => Set(highlight, "enabled", false));
                 if (IsAlive(text)) TryRestore(() => Set(text, "text", originalLabel));
@@ -1586,45 +1594,137 @@ internal sealed class MapCommandPanel
                 catch (TargetInvocationException e) when (e.InnerException is MissingReferenceException || e.InnerException is NullReferenceException) { }
             }
         }
-        internal static EntrySlot? BindEntrySlot(GameplayUI gameplay)
+        internal static EntrySlot? BindEntrySlot(GameplayUI gameplay, Action<string> log, out string reason)
         {
-            Transform slot = gameplay.transform.Find("VirtualMFD/LeftButtons/LeftButton (4)");
-            if (slot == null) return null;
-            Transform label = slot.Find("Label"), highlightTransform = slot.Find("Highlight"), mfdTransform = gameplay.transform.Find("VirtualMFD");
-            Component? button = slot.GetComponent(ButtonType), text = label == null ? null : label.GetComponent(TextType),
-                       highlight = highlightTransform == null ? null : highlightTransform.GetComponent(ImageType),
-                       mfd = mfdTransform == null ? null : mfdTransform.GetComponent(typeof(VirtualMFD));
-            if (button == null || text == null || highlight == null || mfd == null) return null;
-            var buttons = (System.Collections.IList)typeof(VirtualMFD).GetField("leftButtons", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(mfd)!;
-            var screens = (System.Collections.IList)typeof(VirtualMFD).GetField("leftScreens", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(mfd)!;
-            if (buttons.Count <= 3 || screens.Count <= 3 || !Same(buttons[3], button)) return null;
-            return new EntrySlot(slot.gameObject, (RectTransform)slot, button, text, highlight, mfd, screens);
+            const int intendedSlotIndex = 3;
+            reason = "unknown";
+            try
+            {
+                Component[] mfds = gameplay.GetComponentsInChildren(typeof(VirtualMFD), true);
+                if (mfds.Length == 0) return Fail(out reason, "virtual_mfd_missing");
+                if (mfds.Length != 1) return Fail(out reason, "virtual_mfd_ambiguous_" + mfds.Length);
+                Component mfd = mfds[0];
+                if (!mfd.transform.IsChildOf(gameplay.transform)) return Fail(out reason, "virtual_mfd_outside_gameplay_ui");
+
+                FieldInfo? buttonsField = FindField(mfd.GetType(), "leftButtons");
+                FieldInfo? screensField = FindField(mfd.GetType(), "leftScreens");
+                if (buttonsField == null) return Fail(out reason, "left_buttons_field_missing");
+                if (screensField == null) return Fail(out reason, "left_screens_field_missing");
+                if (buttonsField.IsPublic || buttonsField.IsStatic) return Fail(out reason, "left_buttons_field_not_private_instance");
+                if (screensField.IsPublic || screensField.IsStatic) return Fail(out reason, "left_screens_field_not_private_instance");
+                if (!HasListElementType(buttonsField.FieldType, ButtonType)) return Fail(out reason, "left_buttons_element_type_mismatch");
+                if (!HasListElementType(screensField.FieldType, typeof(MFDScreen))) return Fail(out reason, "left_screens_element_type_mismatch");
+                if (!(buttonsField.GetValue(mfd) is System.Collections.IList buttons)) return Fail(out reason, "left_buttons_not_list");
+                if (!(screensField.GetValue(mfd) is System.Collections.IList screens)) return Fail(out reason, "left_screens_not_list");
+                if (buttons.Count <= intendedSlotIndex) return Fail(out reason, "left_button_count_" + buttons.Count);
+                if (screens.Count <= intendedSlotIndex) return Fail(out reason, "left_screen_count_" + screens.Count);
+                if (!(buttons[intendedSlotIndex] is Component button)) return Fail(out reason, "left_button_slot_3_not_component");
+                if (!ButtonType.IsInstanceOfType(button)) return Fail(out reason, "left_button_slot_3_type_" + button.GetType().FullName);
+                Component? attachedButton = button.gameObject.GetComponent(ButtonType);
+                if (!Same(attachedButton, button)) return Fail(out reason, "left_button_slot_3_component_identity_mismatch");
+                if (!button.transform.IsChildOf(mfd.transform)) return Fail(out reason, "left_button_slot_3_outside_virtual_mfd");
+                int identityCount = 0;
+                for (int i = 0; i < buttons.Count; i++) if (Same(buttons[i], button)) identityCount++;
+                if (identityCount != 1) return Fail(out reason, "left_button_slot_3_identity_count_" + identityCount);
+                RectTransform? rect = button.gameObject.GetComponent<RectTransform>();
+                if (rect == null) return Fail(out reason, "left_button_slot_3_rect_missing");
+
+                object? originalScreen = screens[intendedSlotIndex];
+                if (originalScreen != null && !typeof(MFDScreen).IsInstanceOfType(originalScreen))
+                    return Fail(out reason, "left_screen_slot_3_type_" + originalScreen.GetType().FullName);
+                if (originalScreen is Component originalScreenComponent &&
+                    !Same(originalScreenComponent.gameObject.GetComponent(typeof(MFDScreen)), originalScreenComponent))
+                    return Fail(out reason, "left_screen_slot_3_component_identity_mismatch");
+                FieldInfo? labelField = FindField(typeof(MFDScreen), "label");
+                FieldInfo? highlightField = FindField(typeof(MFDScreen), "highlight");
+                if (labelField == null) return Fail(out reason, "mfd_screen_label_field_missing");
+                if (highlightField == null) return Fail(out reason, "mfd_screen_highlight_field_missing");
+                Type textType = labelField.FieldType, highlightType = highlightField.FieldType;
+                if (!typeof(Component).IsAssignableFrom(textType)) return Fail(out reason, "mfd_screen_label_type_not_component");
+                if (!typeof(Component).IsAssignableFrom(highlightType) || !ImageType.IsAssignableFrom(highlightType))
+                    return Fail(out reason, "mfd_screen_highlight_type_incompatible_" + highlightType.FullName);
+
+                Component? text = null, highlight = null;
+                if (originalScreen != null)
+                {
+                    object? nativeLabel = labelField.GetValue(originalScreen), nativeHighlight = highlightField.GetValue(originalScreen);
+                    if (nativeLabel != null)
+                    {
+                        if (!(nativeLabel is Component labelComponent) || !textType.IsInstanceOfType(labelComponent))
+                            return Fail(out reason, "native_label_type_mismatch");
+                        if (!labelComponent.transform.IsChildOf(button.transform)) return Fail(out reason, "native_label_outside_selected_button");
+                        text = labelComponent;
+                    }
+                    if (nativeHighlight != null)
+                    {
+                        if (!(nativeHighlight is Component highlightComponent) || !highlightType.IsInstanceOfType(highlightComponent))
+                            return Fail(out reason, "native_highlight_type_mismatch");
+                        if (!highlightComponent.transform.IsChildOf(button.transform)) return Fail(out reason, "native_highlight_outside_selected_button");
+                        highlight = highlightComponent;
+                    }
+                }
+                if (text == null)
+                {
+                    Component[] candidates = BoundedComponents(button, textType, null);
+                    if (candidates.Length == 0) return Fail(out reason, "selected_button_label_missing");
+                    if (candidates.Length != 1) return Fail(out reason, "selected_button_label_ambiguous_" + candidates.Length);
+                    text = candidates[0];
+                }
+                if (highlight == null)
+                {
+                    object? targetGraphic = TryGet(button, "targetGraphic", out object? graphic) ? graphic : null;
+                    Component[] candidates = BoundedComponents(button, highlightType, targetGraphic);
+                    if (candidates.Length == 0) return Fail(out reason, "selected_button_highlight_missing");
+                    if (candidates.Length != 1) return Fail(out reason, "selected_button_highlight_ambiguous_" + candidates.Length);
+                    highlight = candidates[0];
+                }
+                if (!Same(text.gameObject.GetComponent(textType), text)) return Fail(out reason, "selected_button_label_component_identity_mismatch");
+                if (!Same(highlight.gameObject.GetComponent(highlightType), highlight)) return Fail(out reason, "selected_button_highlight_component_identity_mismatch");
+
+                activeTextType = textType;
+                EntrySlot entry = new EntrySlot(button.gameObject, rect, button, text, highlight, mfd, screens, intendedSlotIndex);
+                log("state=map_panel_entry_bound index=" + intendedSlotIndex + " slot_path=" + entry.SlotPath +
+                    " button_count=" + buttons.Count + " screen_count=" + screens.Count + " text_type=" + textType.FullName +
+                    " original_screen=" + (originalScreen != null));
+                reason = "none";
+                return entry;
+            }
+            catch (Exception e)
+            {
+                reason = "entry_bind_exception_" + e.GetType().Name + "_" + SafeReason(e.Message);
+                return null;
+            }
         }
-        internal static bool CaptureTextStyle(GameplayUI gameplay, Action<string> log)
+        internal static bool CaptureTextStyle(EntrySlot entry, GameplayUI gameplay, Action<string> log)
         {
-            Transform? slot = gameplay.transform.Find("VirtualMFD/LeftButtons/LeftButton (4)/Label"); if (slot == null) return false;
-            Component? text = slot.GetComponent(TextType); if (text == null) return false; sharedTextStyle = text;
-            int canvasDepth = 0; Transform? parent = slot; while (parent != null) { if (parent.GetComponent(CanvasType) != null) canvasDepth++; parent = parent.parent; }
-            Vector3[] corners = new Vector3[4]; ((RectTransform)slot).GetWorldCorners(corners);
-            object canvas = GameplayCanvas(gameplay); log("state=map_text_style source=VirtualMFD/LeftButtons/LeftButton_(4)/Label font=" +
+            Component text = entry.TextComponent; Transform source = text.transform;
+            if (activeTextType == null || !activeTextType.IsInstanceOfType(text) || !(source is RectTransform sourceRect)) return false;
+            if (!HasProperty(text.GetType(), "text") || !HasProperty(text.GetType(), "font") || !HasProperty(text.GetType(), "fontSize") ||
+                !HasProperty(text.GetType(), "material") || !HasProperty(text.GetType(), "fontStyle") || !HasProperty(text.GetType(), "lineSpacing") ||
+                !HasProperty(text.GetType(), "color") || !HasProperty(text.GetType(), "alignment") || !HasProperty(text.GetType(), "raycastTarget") ||
+                !HasAnyProperty(text.GetType(), "supportRichText", "richText") ||
+                !HasAnyProperty(text.GetType(), "resizeTextForBestFit", "enableAutoSizing") ||
+                !HasAnyProperty(text.GetType(), "overflowMode", "horizontalOverflow")) return false;
+            sharedTextStyle = text;
+            int canvasDepth = 0; Transform? parent = source; while (parent != null) { if (parent.GetComponent(CanvasType) != null) canvasDepth++; parent = parent.parent; }
+            Vector3[] corners = new Vector3[4]; sourceRect.GetWorldCorners(corners);
+            object canvas = GameplayCanvas(gameplay); log("state=map_text_style source=" + entry.TextPath + " type=" + text.GetType().FullName + " font=" +
                 ((UnityEngine.Object?)Get(text, "font"))?.name + " material=" + ((UnityEngine.Object?)Get(text, "material"))?.name +
                 " style=" + Get(text, "fontStyle") + " size=" + Get(text, "fontSize") + " canvas_scale=" + Get(canvas, "scaleFactor") +
                 " source_canvas_depth=" + canvasDepth + " source_screen_xy=" + Mathf.Round(corners[0].x) + "," + Mathf.Round(corners[0].y) +
-                " source_lossy_scale=" + slot.lossyScale.x + "," + slot.lossyScale.y + " panel_canvas_depth=1 screen=" + Screen.width + "x" + Screen.height);
+                " source_lossy_scale=" + source.lossyScale.x + "," + source.lossyScale.y + " panel_canvas_depth=1 screen=" + Screen.width + "x" + Screen.height);
             return true;
         }
-        internal static bool CapturePalette(GameplayUI gameplay, Action<string> log, out Color labelGreen, out Color highlightGreen)
+        internal static bool CapturePalette(EntrySlot entry, Action<string> log, out Color labelGreen, out Color highlightGreen)
         {
             labelGreen = highlightGreen = UnityEngine.Color.clear;
-            Transform? labelTransform = gameplay.transform.Find("VirtualMFD/LeftButtons/LeftButton (4)/Label");
-            Transform? highlightTransform = gameplay.transform.Find("VirtualMFD/LeftButtons/LeftButton (4)/Highlight");
-            Component? label = labelTransform == null ? null : labelTransform.GetComponent(TextType);
-            Component? highlight = highlightTransform == null ? null : highlightTransform.GetComponent(ImageType);
-            if (label == null || highlight == null) return false;
-            labelGreen = (Color)Get(label, "color")!; Color rawHighlight = (Color)Get(highlight, "color")!;
+            Component label = entry.TextComponent, highlight = entry.HighlightComponent;
+            if (!TryGet(label, "color", out object? labelColor) || !(labelColor is Color capturedLabel) ||
+                !TryGet(highlight, "color", out object? highlightColor) || !(highlightColor is Color rawHighlight)) return false;
+            labelGreen = capturedLabel;
             highlightGreen = rawHighlight.g >= rawHighlight.r && rawHighlight.g >= rawHighlight.b ? rawHighlight : labelGreen;
-            log("state=map_palette source_label=VirtualMFD/LeftButtons/LeftButton_(4)/Label label_rgba=" + Rgba(labelGreen) +
-                " source_highlight=VirtualMFD/LeftButtons/LeftButton_(4)/Highlight highlight_rgba=" + Rgba(rawHighlight));
+            log("state=map_palette source_label=" + entry.TextPath + " label_type=" + label.GetType().FullName + " label_rgba=" + Rgba(labelGreen) +
+                " source_highlight=" + entry.HighlightPath + " highlight_type=" + highlight.GetType().FullName + " highlight_rgba=" + Rgba(rawHighlight));
             return true;
         }
         internal static bool MouseButtonUp(int button) => (bool)(GetMouseButtonUpMethod.Invoke(null, new object[] { button }) ?? false);
@@ -1643,6 +1743,7 @@ internal sealed class MapCommandPanel
         }
         internal static TextElement Text(string value, Transform parent, int size, Color color, string alignment)
         {
+            if (activeTextType == null || sharedTextStyle == null) throw new InvalidOperationException("native_text_style_not_bound");
             GameObject o = new GameObject("Text", typeof(RectTransform));
             o.transform.SetParent(parent, false);
             GameObject glyph = new GameObject("Glyph", typeof(RectTransform));
@@ -1653,22 +1754,27 @@ internal sealed class MapCommandPanel
             glyphRect.offsetMin = glyphRect.offsetMax = Vector2.zero;
             glyphRect.pivot = new Vector2(.5f, .5f);
             glyphRect.localScale = new Vector3(.5f, .5f, 1f);
-            Component text = glyph.AddComponent(TextType);
+            Component text = glyph.AddComponent(activeTextType);
             Set(text, "text", value);
-            Copy(text, "font");
-            Copy(text, "material");
-            Copy(text, "fontStyle");
-            Copy(text, "lineSpacing");
-            Copy(text, "supportRichText");
-            Copy(text, "alignByGeometry");
-            Set(text, "resizeTextForBestFit", false);
+            CopyRequired(text, "font");
+            CopyRequired(text, "material");
+            CopyRequired(text, "fontStyle");
+            CopyRequired(text, "lineSpacing");
+            CopyAvailable(text, "supportRichText", "richText");
+            CopyAvailable(text, "alignByGeometry");
+            SetAvailable(text, false, "resizeTextForBestFit", "enableAutoSizing");
             // A 34-point glyph at half scale preserves the MFD's half-unit text grid at every canvas scale.
             Set(text, "fontSize", 34);
             Set(text, "color", color);
-            SetEnum(text, "alignment", alignment);
+            SetTextAlignment(text, alignment);
             Set(text, "raycastTarget", false);
-            SetEnum(text, "horizontalOverflow", "Overflow");
-            SetEnum(text, "verticalOverflow", "Overflow");
+            if (HasProperty(text.GetType(), "overflowMode"))
+                SetEnum(text, "overflowMode", "Overflow");
+            else
+            {
+                SetEnum(text, "horizontalOverflow", "Overflow");
+                SetEnum(text, "verticalOverflow", "Overflow");
+            }
             return new TextElement(o, text);
         }
         internal static ButtonElement Button(string name, Transform parent, string label, int size, Color background, Color textColor, Action click)
@@ -1692,7 +1798,31 @@ internal sealed class MapCommandPanel
         internal static void SetValue(object target, string name, object? value) => Set(target, name, value);
         internal static bool IsDestroyed(object? value) => value is UnityEngine.Object unityObject && unityObject == null;
         private static bool IsAlive(object? value) => value != null && !IsDestroyed(value);
-        private static void Copy(object target, string name) { if (sharedTextStyle != null) Set(target, name, Get(sharedTextStyle, name)); }
+        private static void CopyRequired(object target, string name)
+        {
+            if (sharedTextStyle == null) throw new InvalidOperationException("native_text_style_not_bound");
+            Set(target, name, Get(sharedTextStyle, name));
+        }
+        private static void CopyAvailable(object target, params string[] names)
+        {
+            if (sharedTextStyle == null) throw new InvalidOperationException("native_text_style_not_bound");
+            foreach (string name in names)
+            {
+                if (!HasProperty(target.GetType(), name) || !HasProperty(sharedTextStyle.GetType(), name)) continue;
+                Set(target, name, Get(sharedTextStyle, name));
+                return;
+            }
+        }
+        private static void SetAvailable(object target, object? value, params string[] names)
+        {
+            foreach (string name in names)
+            {
+                if (!HasProperty(target.GetType(), name)) continue;
+                Set(target, name, value);
+                return;
+            }
+            throw new MissingMemberException(target.GetType().FullName, string.Join("/", names));
+        }
         private static Type Require(string value) => Type.GetType(value, true)!;
         private static PropertyInfo Property(Type type, string name)
         {
@@ -1700,13 +1830,77 @@ internal sealed class MapCommandPanel
             { property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public)!; Properties.Add(key, property); }
             return property;
         }
+        private static bool HasProperty(Type type, string name) => type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public) != null;
+        private static bool HasAnyProperty(Type type, params string[] names)
+        {
+            foreach (string name in names) if (HasProperty(type, name)) return true;
+            return false;
+        }
         private static object? Get(object target, string name) => Property(target.GetType(), name).GetValue(target, null);
-        private static void Set(object target, string name, object? value) => Property(target.GetType(), name).SetValue(target, value, null);
+        private static bool TryGet(object target, string name, out object? value)
+        {
+            PropertyInfo? property = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+            if (property == null) { value = null; return false; }
+            value = property.GetValue(target, null); return true;
+        }
+        private static void Set(object target, string name, object? value)
+        {
+            PropertyInfo property = Property(target.GetType(), name);
+            if (value != null && !property.PropertyType.IsInstanceOfType(value) && IsNumeric(value.GetType()) && IsNumeric(property.PropertyType))
+                value = Convert.ChangeType(value, property.PropertyType, CultureInfo.InvariantCulture);
+            property.SetValue(target, value, null);
+        }
         private static bool Same(object? a, object? b) => ReferenceEquals(a, b);
         private static string Rgba(Color c) => Mathf.RoundToInt(c.r * 255) + "," + Mathf.RoundToInt(c.g * 255) + "," + Mathf.RoundToInt(c.b * 255) + "," + Mathf.RoundToInt(c.a * 255);
-        private static FieldInfo Field(Type type, string name) => type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+        private static FieldInfo? FindField(Type type, string name) => type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static FieldInfo Field(Type type, string name) => FindField(type, name) ?? throw new MissingFieldException(type.FullName, name);
         private static void SetField(object target, string name, object? value) => Field(target.GetType(), name).SetValue(target, value);
         private static void SetEnum(object target, string name, string value) { PropertyInfo property = Property(target.GetType(), name); property.SetValue(target, Enum.Parse(property.PropertyType, value), null); }
+        private static void SetTextAlignment(object target, string anchor)
+        {
+            PropertyInfo property = Property(target.GetType(), "alignment");
+            string value = anchor;
+            if (!Enum.IsDefined(property.PropertyType, value))
+            {
+                value = anchor switch
+                {
+                    "UpperLeft" => "TopLeft", "UpperCenter" => "Top", "UpperRight" => "TopRight",
+                    "MiddleLeft" => "MidlineLeft", "MiddleCenter" => "Midline", "MiddleRight" => "MidlineRight",
+                    "LowerLeft" => "BottomLeft", "LowerCenter" => "Bottom", "LowerRight" => "BottomRight",
+                    _ => throw new ArgumentOutOfRangeException(nameof(anchor), anchor, "Unsupported text anchor")
+                };
+            }
+            property.SetValue(target, Enum.Parse(property.PropertyType, value), null);
+        }
+        private static bool IsNumeric(Type type)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            return type == typeof(byte) || type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) ||
+                   type == typeof(int) || type == typeof(uint) || type == typeof(long) || type == typeof(ulong) ||
+                   type == typeof(float) || type == typeof(double) || type == typeof(decimal);
+        }
+        private static EntrySlot? Fail(out string reason, string value) { reason = value; return null; }
+        private static bool HasListElementType(Type listType, Type expected)
+        {
+            if (!typeof(System.Collections.IList).IsAssignableFrom(listType) || !listType.IsGenericType) return false;
+            Type[] arguments = listType.GetGenericArguments();
+            return arguments.Length == 1 && arguments[0] == expected;
+        }
+        private static Component[] BoundedComponents(Component button, Type type, object? excluded)
+        {
+            Component[] all = button.GetComponentsInChildren(type, true);
+            var result = new List<Component>();
+            foreach (Component candidate in all)
+                if (candidate != null && candidate.transform.IsChildOf(button.transform) && !Same(candidate, excluded)) result.Add(candidate);
+            return result.ToArray();
+        }
+        private static string SafeReason(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "no_detail";
+            char[] chars = value.ToCharArray();
+            for (int i = 0; i < chars.Length; i++) if (!char.IsLetterOrDigit(chars[i]) && chars[i] != '_' && chars[i] != '-') chars[i] = '_';
+            return new string(chars);
+        }
     }
 
     private sealed class LostEntry
