@@ -480,6 +480,10 @@ internal static class Program
         Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(true, false), "server resolver failure does not schedule wingman");
         Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(false, true), "client resolved does not schedule wingman");
         Equal(false, CradleReleaseProgressionLogic.ShouldScheduleWingman(false, false), "client unresolved does not schedule wingman");
+        Equal(1, CradleReleaseProgressionLogic.RearmCapacityOne(0, 1), "cradle rearm fills empty capacity one");
+        Equal(1, CradleReleaseProgressionLogic.RearmCapacityOne(1, 1), "cradle rearm preserves loaded capacity one");
+        Equal(0, CradleReleaseProgressionLogic.RearmCapacityOne(0, 0), "cradle rearm zero leaves empty");
+        Equal(0, CradleReleaseProgressionLogic.RearmCapacityOne(-1, -1), "cradle rearm negative inputs cannot create ammo");
         Equal(false, AircraftSwitchLogic.NeedsLocalSimTransition(false, false), "localsim false remains skip");
         Equal(true, AircraftSwitchLogic.NeedsLocalSimTransition(false, true), "localsim false to true transitions");
         Equal(true, AircraftSwitchLogic.NeedsLocalSimTransition(true, false), "localsim true to false transitions");

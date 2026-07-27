@@ -4,6 +4,13 @@ internal enum CradleNativeReleasePath { None, Cmd, Rpc }
 
 internal static class CradleReleaseProgressionLogic
 {
+    internal static int RearmCapacityOne(int currentAmmo, int ammoToRearm)
+    {
+        int current = currentAmmo < 0 ? 0 : currentAmmo > 1 ? 1 : currentAmmo;
+        int requested = ammoToRearm < 0 ? 0 : ammoToRearm > 1 ? 1 : ammoToRearm;
+        return current + requested > 1 ? 1 : current + requested;
+    }
+
     internal static bool ShouldScheduleWingman(bool isServer, bool resolved) => isServer && resolved;
     internal static CradleNativeReleasePath NativePath(bool isServer, bool hasAuthority) =>
         isServer && hasAuthority ? CradleNativeReleasePath.Rpc :

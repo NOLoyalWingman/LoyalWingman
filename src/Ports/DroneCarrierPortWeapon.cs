@@ -194,7 +194,7 @@ internal sealed class DroneCarrierPortWeapon : Weapon
         DisableTemplateVisuals();
         if (TryInitialDescriptor(aircraft, out Descriptor initial)) { descriptor = initial; AdvanceLoadoutRevision("initial"); }
         state = descriptor == null ? DroneCarrierPortState.Empty : DroneCarrierPortState.Loaded;
-        SetVisual(); Rearm();
+        RefreshStoredDroneProjection();
         if (ReferenceEquals(weaponMount, DroneCarrierPortRegistry.GenericMount))
             bindCoroutine = StartCoroutine(BindNextFrame(aircraft, hardpoint, weaponMount));
     }
@@ -266,7 +266,21 @@ internal sealed class DroneCarrierPortWeapon : Weapon
         triggerObject.AddComponent<DroneCarrierPortTriggerRelay>().Bind(this);
     }
 
-    public override void Rearm() { ammo = descriptor == null ? 0 : 1; SetVisual(); }
+    public override void Rearm(int ammoToRearm, WeaponStation station)
+    {
+        weaponStation = station;
+        RefreshStoredDroneProjection();
+    }
+    private void RefreshStoredDroneProjection()
+    {
+        ammo = descriptor == null ? 0 : 1;
+        SetVisual();
+    }
+    private void RefreshStoredDroneProjectionFromStation()
+    {
+        if (weaponStation != null) weaponStation.Rearm(1);
+        else RefreshStoredDroneProjection();
+    }
     public override int GetAmmoLoaded() => ammo > 0 ? 1 : 0;
     public override int GetAmmoTotal() => ammo > 0 ? 1 : 0;
     public override int GetFullAmmo() => 1;
@@ -325,7 +339,7 @@ internal sealed class DroneCarrierPortWeapon : Weapon
             return;
         Descriptor accepted = descriptor;
         DetachDockedVisualForRelease();
-        descriptor = null; provisional = null; reservedCandidate = null; ammo = 0; SetVisual();
+        descriptor = null; provisional = null; reservedCandidate = null; RefreshStoredDroneProjection();
         AdvanceLoadoutRevision("consumed");
         Plugin.ReleaseDroneCarrierPort(this, accepted.definition, accepted.loadout, accepted.livery);
     }
@@ -602,7 +616,7 @@ internal sealed class DroneCarrierPortWeapon : Weapon
     internal void CommitCapture()
     {
         if (provisional == null) return;
-        descriptor = provisional; provisional = null; reservedCandidate = null; state = DroneCarrierPortState.Loaded; AdvanceLoadoutRevision("recovery"); SetVisual(); weaponStation?.Rearm();
+        descriptor = provisional; provisional = null; reservedCandidate = null; state = DroneCarrierPortState.Loaded; AdvanceLoadoutRevision("recovery"); RefreshStoredDroneProjectionFromStation();
     }
     internal bool BeginPlayerHandoff(Aircraft candidate)
     {
@@ -617,21 +631,21 @@ internal sealed class DroneCarrierPortWeapon : Weapon
     {
         if (state != DroneCarrierPortState.PlayerHandoff || provisional == null) return;
         if (!DroneCarrierPortLogic.TryCommitPlayerHandoff(ref state)) return;
-        descriptor = provisional; provisional = null; reservedCandidate = null; AdvanceLoadoutRevision("player_recovery"); SetVisual(); weaponStation?.Rearm();
+        descriptor = provisional; provisional = null; reservedCandidate = null; AdvanceLoadoutRevision("player_recovery"); RefreshStoredDroneProjectionFromStation();
     }
     internal void CancelPlayerHandoff()
     {
         if (state != DroneCarrierPortState.PlayerReserved && state != DroneCarrierPortState.PlayerHandoff) return;
-        provisional = null; reservedCandidate = null; DroneCarrierPortLogic.Reset(ref state); Rearm(); SetVisual();
+        provisional = null; reservedCandidate = null; DroneCarrierPortLogic.Reset(ref state); RefreshStoredDroneProjection();
     }
-    internal void Cancel() { provisional = null; reservedCandidate = null; savedOwner = savedTarget = null; DroneCarrierPortLogic.Cancel(ref state, descriptor != null); Rearm(); SetVisual(); }
+    internal void Cancel() { provisional = null; reservedCandidate = null; savedOwner = savedTarget = null; DroneCarrierPortLogic.Cancel(ref state, descriptor != null); RefreshStoredDroneProjection(); }
     private bool HasRecoveryPresence(Aircraft candidate) => animatedBinding == null ? IsInTrigger(candidate) :
         HasAnimatedProvider && recoveryEnabled && candidate.rb != null && HasAnimatedFinalOverlap(candidate.rb);
     private void ResetLive()
     {
         if (descriptor != null) AdvanceLoadoutRevision("terminal_clear");
         descriptor = provisional = null; reservedCandidate = null; savedOwner = savedTarget = null; savedAimpoint = default;
-        triggerOccupancy.Clear(); ClearReleaseExclusion(); ResetAnimatedOperation(); ResetAnimatedProbe(); ammo = 0; DroneCarrierPortLogic.Reset(ref state); SetVisual();
+        triggerOccupancy.Clear(); ClearReleaseExclusion(); ResetAnimatedOperation(); ResetAnimatedProbe(); DroneCarrierPortLogic.Reset(ref state); RefreshStoredDroneProjection();
     }
     private void TerminalReset()
     {
@@ -989,7 +1003,7 @@ internal sealed class DroneCarrierPortWeapon : Weapon
     internal void EndLoadoutApply() { loadoutApplyInProgress = false; }
     internal void ProjectCommittedLoadout()
     {
-        try { SetVisual(); weaponStation?.Rearm(); }
+        try { RefreshStoredDroneProjectionFromStation(); }
         catch (Exception e) { Debug.LogError("[LoyalWingman] state=mounted_loadout_projection_failed reason=" + e.GetType().Name); }
     }
 

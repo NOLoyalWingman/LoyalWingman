@@ -351,7 +351,7 @@ internal static class CombatSupport
             if (aircraft.NetworkHQ == null ||
                 !aircraft.NetworkHQ.trackingDatabase.TryGetValue(target.persistentID, out TrackingInfo tracking))
                 return false;
-            return CombatAI.AnalyzeTarget(station, aircraft, tracking, 0f, distance, true).opportunity > 0f;
+            return CombatAI.AnalyzeTarget(station, aircraft, tracking, 0f, distance, maxRangeMultiplier: 100f).opportunity > 0f;
         }
         catch
         {
@@ -405,7 +405,7 @@ internal static class CombatSupport
                 !defender.NetworkHQ.trackingDatabase.TryGetValue(target.persistentID, out TrackingInfo tracking))
                 return false;
             float distance = Vector3.Distance(defender.transform.position, target.transform.position);
-            opportunity = CombatAI.AnalyzeTarget(station, defender, tracking, 0f, distance, true).opportunity;
+            opportunity = CombatAI.AnalyzeTarget(station, defender, tracking, 0f, distance, maxRangeMultiplier: 100f).opportunity;
             return Finite(opportunity);
         }
         catch
@@ -423,7 +423,7 @@ internal static class CombatSupport
                 !defender.NetworkHQ.trackingDatabase.TryGetValue(target.persistentID, out TrackingInfo tracking))
                 return false;
             float distance = Vector3.Distance(defender.transform.position, target.transform.position);
-            opportunity = CombatAI.AnalyzeTarget(station, defender, tracking, 0f, distance, true).opportunity;
+            opportunity = CombatAI.AnalyzeTarget(station, defender, tracking, 0f, distance, maxRangeMultiplier: 100f).opportunity;
             return Finite(opportunity);
         }
         catch { return false; }

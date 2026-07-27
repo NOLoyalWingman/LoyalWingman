@@ -43,11 +43,12 @@ internal sealed class LoyalWingmanCradleWeapon : Weapon
             localLaunchLatches.Remove(weaponStation);
     }
 
-    public override void Rearm()
+    public override void Rearm(int ammoToRearm, WeaponStation station)
     {
-        ammo = 1;
-        if (weaponStation != null)
-            localLaunchLatches.Remove(weaponStation);
+        weaponStation = station;
+        ammo = CradleReleaseProgressionLogic.RearmCapacityOne(ammo, ammoToRearm);
+        if (ammo > 0)
+            localLaunchLatches.Remove(station);
     }
 
     internal static bool AdmitLocalLaunch(WeaponStation station, Unit owner)
