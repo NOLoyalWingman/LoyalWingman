@@ -10,12 +10,14 @@ Install Nuclear Option 0.34, BepInEx 5, Blueprinter (`com.nikkorap.blueprinter`,
 
 - Migrated `Weapon/WeaponStation.Rearm` to the amount/station API.
 - Migrated `CombatAI.AnalyzeTarget` from `mobile` to the native 0.34 `maxRangeMultiplier: 100f` API.
+- Replaced the obsolete hard-coded DynamicMap button path with verified `VirtualMFD` slot binding and added native TextMeshPro label/style compatibility.
 
 ## Verification
 
 - 927 logic tests pass.
 - Release build passes with deployment disabled.
 - Native missile release contract passes against the 0.34 game assembly.
+- Runtime testing confirms that the LW entry uses the native DynamicMap `VirtualMFD` route, TextMeshPro label, persistent button background, and child selection highlight.
 
 ## Scope and pending acceptance
 
