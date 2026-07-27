@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2] - Unreleased
+
+0.34 compatibility prerelease.
+
+### Changed
+
+- Migrated `Weapon/WeaponStation.Rearm` to the amount/station API.
+- Migrated `CombatAI.AnalyzeTarget` from `mobile` to the native 0.34 `maxRangeMultiplier: 100f` API.
+
+### Verification
+
+- 927 logic tests, Release build, and native missile release contract gate pass.
+
 ## [0.0.1] - 2026-07-27
 
 ### Added

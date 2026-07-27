@@ -1,6 +1,6 @@
 # Loyal Wingman
 
-Loyal Wingman is a Nuclear Option 0.33 plugin for managing FQ-106 wingmen. Version 0.0.1 is the initial stable release. It is SP-first; dedicated multiplayer acceptance and extended runtime coverage remain pending.
+Loyal Wingman is a Nuclear Option plugin for managing FQ-106 wingmen. The current release is **0.0.2 compatibility prerelease for Nuclear Option 0.34**. Version 0.0.1 remains the tested Nuclear Option 0.33 release. This prerelease is SP-first; dedicated multiplayer acceptance and extended runtime coverage remain pending.
 
 ## Requirements
 
@@ -61,8 +61,9 @@ Include both logs when reporting an issue:
 
 ## Release and legal information
 
-- [0.0.1 release notes](docs/RELEASE_0.0.1.md)
-- [0.0.1 install card](docs/TEST_BUILD_0.0.1.md)
+- [0.0.2 compatibility prerelease notes](docs/RELEASE_0.0.2.md)
+- [0.0.2 compatibility test install card](docs/TEST_BUILD_0.0.2.md)
+- [0.0.1 historical release notes](docs/RELEASE_0.0.1.md)
 - [User guide](docs/USER_GUIDE.md)
 - [NOMNOM submission draft](docs/NOMNOM_SUBMISSION.md)
 - [Changelog](CHANGELOG.md)

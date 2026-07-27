@@ -2,7 +2,7 @@
 
 ## Requirements and installation
 
-Loyal Wingman 0.0.1 requires Nuclear Option 0.33, BepInEx 5, Blueprinter 1.8.21 or later, and FQ-106 / Kestrel 2.2.0 or later. Copy the single `LoyalWingman.dll` release asset to `Nuclear Option\BepInEx\plugins\LoyalWingman\`. No ZIP extraction or PDB is required.
+Loyal Wingman 0.0.2 compatibility prerelease requires Nuclear Option 0.34, BepInEx 5, Blueprinter 1.8.21 or later, and FQ-106 / Kestrel 2.2.0 or later. Copy the single `LoyalWingman.dll` release asset to `Nuclear Option\BepInEx\plugins\LoyalWingman\`. No ZIP extraction or PDB is required.
 
 The plugin, HUD messages, and Combat are enabled by default. To disable Combat, edit `BepInEx\config\discord9.loyalwingman.cfg` before starting the game:
 

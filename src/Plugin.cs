@@ -20,7 +20,7 @@ namespace LoyalWingman;
 [BepInDependency("blueprinter.kestrel", BepInDependency.DependencyFlags.HardDependency)]
 public sealed class Plugin : BaseUnityPlugin
 {
-    public const string Guid = "discord9.loyalwingman", Name = "Loyal Wingman", Version = "0.0.1";
+    public const string Guid = "discord9.loyalwingman", Name = "Loyal Wingman", Version = "0.0.2";
     public int MountedDroneLoadoutApiVersion => 1;
     public bool TryQueryMountedDroneLoadout(Weapon portWeapon, out long revision, out string reason,
                                              out string[] currentMountKeys, out string[][] legalMountKeysBySlot)
