@@ -1,14 +1,14 @@
 # NOMNOM submission: Loyal Wingman 0.0.2
 
-This is the 0.0.2 compatibility-prerelease update for `modManifests/LoyalWingman.json`. [NOMNOM PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220) remains a draft and awaits this update and upstream review.
+This is the 0.0.2 compatibility-prerelease update for `modManifests/LoyalWingman.json`. [NOMNOM PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220) has been updated and remains a draft pending Nuclear Option 0.34 runtime acceptance.
 
 ## Checklist
 
 - [x] Run `scripts/PackageRelease.ps1` and record the generated `LoyalWingman.dll` SHA-256.
-- [ ] Create the parseable tag `v0.0.2` and a public GitHub Release.
-- [ ] Upload exactly `LoyalWingman.dll` as the first GitHub Release asset (no ZIP or PDB).
-- [ ] Record the GitHub release-asset digest.
-- [ ] Update [PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220); it remains a draft.
+- [x] Create the parseable tag `v0.0.2` and a public GitHub Release.
+- [x] Upload exactly `LoyalWingman.dll` as the first GitHub Release asset (no ZIP or PDB).
+- [x] Record the GitHub release-asset digest.
+- [x] Update [PR #220](https://github.com/KopterBuzz/NOMNOM/pull/220); it remains a draft pending runtime acceptance.
 
 `NOComponentsWIP` is neither a current runtime dependency nor registered in NOMNOM, so it must not be declared in `dependencies`.
 
@@ -55,4 +55,4 @@ This is the 0.0.2 compatibility-prerelease update for `modManifests/LoyalWingman
 }
 ```
 
-The local package is complete. The `v0.0.2` tag, GitHub Release, asset upload, and PR #220 update are pending; PR #220 remains a draft.
+The local package, `v0.0.2` GitHub prerelease, release digest, and PR #220 update are complete. PR #220 remains a draft pending Nuclear Option 0.34 runtime acceptance.
