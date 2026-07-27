@@ -1645,6 +1645,8 @@ internal sealed class MapCommandPanel
                     return Fail(out reason, "mfd_screen_highlight_type_incompatible_" + highlightType.FullName);
 
                 Component? text = null, highlight = null;
+                int nativeHighlightPairCount = 0, nativeHighlightSignatureCount = 0;
+                string highlightSource = "original_screen", nativeHighlightSignature = "original_screen";
                 if (originalScreen != null)
                 {
                     object? nativeLabel = labelField.GetValue(originalScreen), nativeHighlight = highlightField.GetValue(originalScreen);
@@ -1672,20 +1674,23 @@ internal sealed class MapCommandPanel
                 }
                 if (highlight == null)
                 {
-                    object? targetGraphic = TryGet(button, "targetGraphic", out object? graphic) ? graphic : null;
-                    Component[] candidates = BoundedComponents(button, highlightType, targetGraphic);
-                    if (candidates.Length == 0) return Fail(out reason, "selected_button_highlight_missing");
-                    if (candidates.Length != 1) return Fail(out reason, "selected_button_highlight_ambiguous_" + candidates.Length);
-                    highlight = candidates[0];
+                    if (!TryResolveNativeHighlight(button, mfd, buttons, screens, intendedSlotIndex, highlightField, highlightType,
+                            out highlight, out nativeHighlightPairCount, out nativeHighlightSignatureCount,
+                            out nativeHighlightSignature, out string highlightReason))
+                        return Fail(out reason, highlightReason);
+                    highlightSource = "neighbor_signature";
                 }
                 if (!Same(text.gameObject.GetComponent(textType), text)) return Fail(out reason, "selected_button_label_component_identity_mismatch");
-                if (!Same(highlight.gameObject.GetComponent(highlightType), highlight)) return Fail(out reason, "selected_button_highlight_component_identity_mismatch");
+                if (highlight == null) return Fail(out reason, "selected_button_highlight_resolution_returned_null");
+                if (!HasExactComponentIdentity(highlight.gameObject, highlightType, highlight)) return Fail(out reason, "selected_button_highlight_component_identity_mismatch");
 
                 activeTextType = textType;
                 EntrySlot entry = new EntrySlot(button.gameObject, rect, button, text, highlight, mfd, screens, intendedSlotIndex);
                 log("state=map_panel_entry_bound index=" + intendedSlotIndex + " slot_path=" + entry.SlotPath +
                     " button_count=" + buttons.Count + " screen_count=" + screens.Count + " text_type=" + textType.FullName +
-                    " original_screen=" + (originalScreen != null));
+                    " original_screen=" + (originalScreen != null) + " highlight_source=" + highlightSource +
+                    " native_pair_count=" + nativeHighlightPairCount + " native_signature_count=" + nativeHighlightSignatureCount +
+                    " native_signature=" + nativeHighlightSignature + " selected_overlay_path=" + entry.HighlightPath);
                 reason = "none";
                 return entry;
             }
@@ -1893,6 +1898,97 @@ internal sealed class MapCommandPanel
             foreach (Component candidate in all)
                 if (candidate != null && candidate.transform.IsChildOf(button.transform) && !Same(candidate, excluded)) result.Add(candidate);
             return result.ToArray();
+        }
+        private static bool TryResolveNativeHighlight(Component selectedButton, Component mfd,
+            System.Collections.IList buttons, System.Collections.IList screens, int selectedIndex,
+            FieldInfo highlightField, Type highlightType, out Component? selectedHighlight,
+            out int pairCount, out int signatureCount, out string signature, out string reason)
+        {
+            selectedHighlight = null; pairCount = signatureCount = 0; signature = "none"; reason = "unknown";
+            var signatures = new Dictionary<string, int>();
+            for (int i = 0; i < screens.Count; i++)
+            {
+                if (i == selectedIndex || screens[i] == null) continue;
+                pairCount++;
+                if (i >= buttons.Count)
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_button_missing", pairCount, signatures.Count);
+                if (!(buttons[i] is Component pairButton) || !ButtonType.IsInstanceOfType(pairButton))
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_button_type", pairCount, signatures.Count);
+                if (!HasExactComponentIdentity(pairButton.gameObject, ButtonType, pairButton) || !pairButton.transform.IsChildOf(mfd.transform))
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_button_identity", pairCount, signatures.Count);
+                if (!(screens[i] is Component pairScreen) || !typeof(MFDScreen).IsInstanceOfType(pairScreen) ||
+                    !HasExactComponentIdentity(pairScreen.gameObject, typeof(MFDScreen), pairScreen))
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_screen_identity", pairCount, signatures.Count);
+                object? value = highlightField.GetValue(pairScreen);
+                if (!(value is Component pairHighlight) || pairHighlight.GetType() != highlightType)
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_field_type", pairCount, signatures.Count);
+                if (!HasExactComponentIdentity(pairHighlight.gameObject, highlightType, pairHighlight))
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_component_identity", pairCount, signatures.Count);
+                if (!TryBuildHighlightSignature(pairButton, pairHighlight, highlightType, out string pairSignature, out string pairReason))
+                    return HighlightFail(out reason, "native_highlight_pair_" + i + "_" + pairReason, pairCount, signatures.Count);
+                signatures[pairSignature] = signatures.TryGetValue(pairSignature, out int support) ? support + 1 : 1;
+            }
+            signatureCount = signatures.Count;
+            if (pairCount == 0) return HighlightFail(out reason, "native_highlight_no_neighbor_pairs", pairCount, signatureCount);
+            if (signatureCount != 1) return HighlightFail(out reason, "native_highlight_signature_ambiguous", pairCount, signatureCount);
+            foreach (string key in signatures.Keys) signature = key;
+
+            object? targetGraphic = TryGet(selectedButton, "targetGraphic", out object? graphic) ? graphic : null;
+            bool rootTargetRejected = targetGraphic is Component target && Same(target.transform, selectedButton.transform);
+            int matches = 0;
+            foreach (Component candidate in selectedButton.GetComponentsInChildren(highlightType, true))
+            {
+                if (candidate == null || candidate.GetType() != highlightType) continue;
+                if (!TryBuildHighlightSignature(selectedButton, candidate, highlightType, out string candidateSignature, out _)) continue;
+                if (candidateSignature != signature) continue;
+                selectedHighlight = candidate; matches++;
+            }
+            if (matches != 1)
+            {
+                selectedHighlight = null;
+                return HighlightFail(out reason, "native_highlight_selected_match_" + matches + "_root_target_rejected_" + rootTargetRejected,
+                    pairCount, signatureCount);
+            }
+            reason = "none";
+            return true;
+        }
+        private static bool TryBuildHighlightSignature(Component button, Component highlight, Type highlightType,
+            out string signature, out string reason)
+        {
+            signature = "none"; reason = "unknown";
+            if (highlight.GetType() != highlightType) { reason = "endpoint_type"; return false; }
+            if (Same(highlight.transform, button.transform)) { reason = "button_root_rejected"; return false; }
+            if (!highlight.transform.IsChildOf(button.transform)) { reason = "outside_button"; return false; }
+            object? targetGraphic = TryGet(button, "targetGraphic", out object? graphic) ? graphic : null;
+            if (Same(highlight, targetGraphic)) { reason = "target_graphic_rejected"; return false; }
+
+            var childPath = new List<int>();
+            Transform current = highlight.transform;
+            while (!Same(current, button.transform))
+            {
+                childPath.Add(current.GetSiblingIndex());
+                if (current.parent == null) { reason = "path_unrooted"; return false; }
+                current = current.parent;
+            }
+            childPath.Reverse();
+            Component[] endpointComponents = highlight.gameObject.GetComponents(highlightType);
+            int ordinal = -1;
+            for (int i = 0; i < endpointComponents.Length; i++) if (Same(endpointComponents[i], highlight)) { ordinal = i; break; }
+            if (ordinal < 0) { reason = "endpoint_identity"; return false; }
+            signature = string.Join(".", childPath) + "|" + highlightType.FullName + "|" + ordinal;
+            reason = "none";
+            return true;
+        }
+        private static bool HasExactComponentIdentity(GameObject owner, Type type, Component expected)
+        {
+            int matches = 0;
+            foreach (Component component in owner.GetComponents(type)) if (Same(component, expected)) matches++;
+            return matches == 1;
+        }
+        private static bool HighlightFail(out string reason, string value, int pairs, int signatures)
+        {
+            reason = value + "_pairs_" + pairs + "_signatures_" + signatures;
+            return false;
         }
         private static string SafeReason(string value)
         {
