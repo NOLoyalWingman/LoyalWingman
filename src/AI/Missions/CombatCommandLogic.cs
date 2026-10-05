@@ -81,6 +81,10 @@ internal static class CombatCommandLogic
         return true;
     }
 
+    // A transient follow fallback affects only its requester; it never changes the AUTO projection of peers.
+    internal static WingmanDesired ResolveFollowFallback(WingmanDesired desired, bool fallbackActive) =>
+        fallbackActive && desired == WingmanDesired.Follow ? WingmanDesired.Loiter : desired;
+
     internal static WingmanDesired ResolveDesired(bool combatEnabled, WingmanMission mission, bool targetReady,
                                                   DroneModeOverride modeOverride, bool autoFollow)
     {

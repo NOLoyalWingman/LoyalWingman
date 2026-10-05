@@ -56,7 +56,11 @@ internal sealed class FixedWingDroneCasState : PilotBaseState
                 target = null;
                 TryAcquireTarget(false);
             }
-            if (target != null && !ReferenceEquals(target, previousTarget)) Log("cas_target_acquired target_pid=" + target.persistentID);
+            if (!ReferenceEquals(target, previousTarget))
+            {
+                ResetGunTargetHistory();
+                if (target != null) Log("cas_target_acquired target_pid=" + target.persistentID);
+            }
 
             if (target == null)
             {
@@ -220,6 +224,20 @@ internal sealed class FixedWingDroneCasState : PilotBaseState
         if (target.speed > 30f && targetDistance < 500f && targetAngle < 45f && drone.speed - target.speed > 60f) inputs.throttle = 0f;
         if (Time.timeSinceLevelLoad - gunLastFired < .5f && CanRequestFixedGun(station)) pilot.Fire();
         autopilot.AutoAim(aim, false, target.speed > 30f || ignoreCollision, false, 1f, 180f, obscured, Mathf.Clamp(gunTargetHeight, drone.maxRadius, 8000f), velocity);
+    }
+
+    private void ResetGunTargetHistory()
+    {
+        // Firing continuation is target-specific; do not carry it or its lead/damping history across targets.
+        gunLastFired = -100f;
+        gunLastTargetAngle = 0f;
+        gunTargetVelocityPrevious = Vector3.zero;
+        gunClimbFactor = 0f;
+        gunClimbing = false;
+        gunBreakOffUntil = 0f;
+        gunTargetHeight = drone.radarAlt;
+        hasLastKnownPosition = false;
+        lastKnownPosition = default;
     }
 
     private void Loiter(AutopilotPlane autopilot, GlobalPosition center, float phase)

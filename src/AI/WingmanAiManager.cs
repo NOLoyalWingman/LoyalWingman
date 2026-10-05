@@ -27,13 +27,14 @@ internal sealed class WingmanAiManager
     private readonly HashSet<Aircraft> hullEnvelopeLogged = new HashSet<Aircraft>();
     private float nextReconcile, nextSample, nextCombatScan, nextMissileDefenseScan;
     private Aircraft? activeLeader;
+    private bool leaderAvailable;
     private GlobalPosition anchor, rawLeader;
     private bool hasAnchor, hasRawLeader;
     private Vector3 anchorVelocity;
     private float anchorRadarAlt = 700f, relativeUp = 700f, candidateSince = -1f, lastSampleTime;
     private WingmanMode mode;
     private bool modeInitialized, jumpLatched;
-    private float epoch, epochTime, followInhibitUntil;
+    private float epoch, epochTime;
     internal WingmanAiManager(WingmanSessionContext context, WingmanStatusReporter reporter)
     {
         this.context = context;
@@ -186,6 +187,10 @@ internal sealed class WingmanAiManager
             r.modeOverride == DroneModeOverride.Auto ? mode.ToString() : r.modeOverride.ToString(), r.mission));
         ApplyDesired(drone, r, "launch_clearance_" + reason);
     }
+    internal bool OwnsLaunchClearance(Aircraft drone, FixedWingDroneLaunchClearanceState state,
+                                       Aircraft carrier, PersistentID carrierId) =>
+        records.TryGetValue(drone, out Record r) && r.launchClearanceActive && r.state == state &&
+        ReferenceEquals(r.launchCarrier, carrier) && r.launchCarrierId == carrierId && RuntimeOwns(drone, state, out _);
     internal void LogLaunchClearanceEnter(Aircraft drone, Aircraft carrier, PersistentID carrierId,
                                            Vector3 egressDirection)
     {
@@ -257,7 +262,7 @@ internal sealed class WingmanAiManager
         }
         r.hasLoiterPoint = true;
         r.loiterPoint = point;
-        r.loiterRevision++;
+        r.loiterAnchorRevision++;
         r.modeOverride = DroneModeOverride.Loiter;
         ApplyDesired(drone, r, "cruise_to_point");
         return true;
@@ -268,7 +273,7 @@ internal sealed class WingmanAiManager
             return false;
         Record r = records[drone];
         r.hasLoiterPoint = false;
-        r.loiterRevision++;
+        r.loiterAnchorRevision++;
         r.modeOverride = DroneModeOverride.Loiter;
         ApplyDesired(drone, r, "clear_loiter_here");
         return true;
@@ -311,7 +316,7 @@ internal sealed class WingmanAiManager
         if (!HasAvailableAam(drone)) { reason = "no_ammo"; return false; }
         Record r = records[drone];
         ClearAirToAirRecord(r); ClearAntiShipRecord(r); ClearSeadRecord(r); ClearCasRecord(r); ClearStrikeRecord(r); ClearCapRecord(r);
-        r.hasCapAnchor = true; r.capAnchor = anchor; r.capRevision++; r.mission = WingmanMission.Cap;
+        r.hasCapAnchor = true; r.capAnchor = anchor; r.capRevision++; r.loiterAnchorRevision++; r.mission = WingmanMission.Cap;
         CombatLog(drone, "cap_assign");
         ApplyDesired(drone, r, "assign_cap");
         reason = ""; return true;
@@ -532,6 +537,13 @@ internal sealed class WingmanAiManager
         if (r.mission == WingmanMission.Strike) { r.mission = WingmanMission.None; ApplyDesired(drone, r, reason); }
         return true;
     }
+    // Revision-scoped progress belongs to the record, rather than a transient strike state, so defense can resume it.
+    internal HashSet<PersistentID> GetStrikeReleasedTargetIds(Aircraft drone, int revision)
+    {
+        if (!records.TryGetValue(drone, out Record r) || r.strikeRevision != revision)
+            return new HashSet<PersistentID>();
+        return r.strikeReleasedTargetIds;
+    }
     internal bool TryGetStrikeTarget(Aircraft drone, out Unit target)
     {
         target = null!;
@@ -682,6 +694,8 @@ internal sealed class WingmanAiManager
         if (!NativeRecoveryGuard.TryEvaluate(drone, out reason))
             return false;
         Pilot pilot = drone.pilots[0];
+        if (!TryPreflightNativeLanding(drone, out reason))
+            return false;
         if (pilot.pilotType != Pilot.PilotType.Plane || drone.autopilot is not AutopilotPlane)
         {
             reason = "native_landing_unavailable";
@@ -730,6 +744,39 @@ internal sealed class WingmanAiManager
             " native=" + (pilot.currentState is AIPilotLandingState));
         return true;
     }
+    // AIPilotLandingState ejects when its own RequestLanding query has no result.  Run the same query first.
+    private static bool TryPreflightNativeLanding(Aircraft drone, out string reason)
+    {
+        reason = "native_landing_unavailable";
+        try
+        {
+            if (drone.NetworkHQ == null || drone.weaponManager == null)
+                return false;
+            AircraftParameters parameters = drone.GetAircraftParameters();
+            RunwayQuery query = new RunwayQuery
+            {
+                RunwayType = RunwayQueryType.Landing,
+                MinSize = parameters.verticalLanding ? drone.definition.length : parameters.takeoffDistance,
+                LandingSpeed = parameters.verticalLanding ? 0f :
+                    Mathf.Sqrt(drone.GetMass() / drone.definition.aircraftInfo.maxWeight) * parameters.landingSpeed,
+                TailHook = drone.weaponManager.HasTailHook()
+            };
+            Airbase? airbase = drone.NetworkHQ.GetNearestAirbase(drone.transform.position, query);
+            Airbase.Runway.RunwayUsage? usage = airbase != null ? airbase.RequestLanding(drone, query) : null;
+            if (!usage.HasValue)
+            {
+                reason = "native_landing_no_runway";
+                return false;
+            }
+            reason = "";
+            return true;
+        }
+        catch
+        {
+            reason = "native_landing_unavailable";
+            return false;
+        }
+    }
     internal bool TryCancelReturnToBase(Aircraft drone, out string reason)
     {
         reason = "";
@@ -742,22 +789,25 @@ internal sealed class WingmanAiManager
                                             drone.unitState == Unit.UnitState.Abandoned,
                                             drone.unitState == Unit.UnitState.Returned, drone.radarAlt, out reason))
             return false;
-        Airbase.Runway runway;
         Pilot pilot;
         AIPilotLandingState landing;
         try
         {
             pilot = drone.pilots[0];
             landing = pilot.AILandingState;
-            runway = landing.runwayUsage.Runway;
         }
         catch
         {
             reason = "rtb_committed";
             return false;
         }
+        if (!CanLeaveNativeLandingForCancel(drone, landing))
+        {
+            reason = "rtb_committed";
+            return false;
+        }
         r.returningToBase = false;
-        ApplyDesired(drone, r, "rtb_cancel");
+        ApplyDesired(drone, r, "rtb_cancel", allowNativeLanding: true);
         if (r.state == null || pilot.currentState != r.state || pilot.currentState == landing)
         {
             r.returningToBase = true;
@@ -766,24 +816,51 @@ internal sealed class WingmanAiManager
         ClearCasRecord(r); ClearStrikeRecord(r); r.mission = WingmanMission.None;
         r.lastRtbPilotState = null;
         log("state=rtb_cancel_accepted pid=" + Pid(drone));
+        ReleaseNativeLandingUsage(drone, landing, "rtb_cancel");
+        return true;
+    }
+    // Cancellation is the sole intentional takeover of a native landing state; generic reconciliation never does this.
+    private bool CanLeaveNativeLandingForCancel(Aircraft drone, AIPilotLandingState landing)
+    {
         try
         {
-            runway.DeregisterLanding(drone);
+            return context.CanReconcile() && !context.HasPlayerAssociation(drone) && drone.IsServer && drone.LocalSim &&
+                   drone.pilots != null && drone.pilots.Length > 0 && drone.pilots[0] != null &&
+                   drone.pilots[0].pilotType == Pilot.PilotType.Plane && drone.autopilot is AutopilotPlane &&
+                   drone.pilots[0].currentState == landing;
         }
-        catch (Exception e)
-        {
-            log("state=rtb_cancel_deregister_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name);
-        }
-        return true;
+        catch { return false; }
     }
     internal void Unregister(Aircraft drone, string reason)
     {
         records.TryGetValue(drone, out Record? r);
+        bool liveCustom = r != null && InstalledStateOwns(drone, r);
+        if (liveCustom)
+        {
+            bool terminalOrPlayer = context.HasPlayerAssociation(drone) || drone.disabled || drone.HasEjected() ||
+                                    drone.unitState == Unit.UnitState.Abandoned || drone.unitState == Unit.UnitState.Returned;
+            if (terminalOrPlayer)
+            {
+                // We no longer own the aircraft's lifecycle: detach bookkeeping without changing its pilot state.
+                CancelOnly(r!.state!);
+                r.state = null;
+            }
+            else
+            {
+                bool handedOff = false;
+                try { handedOff = context.CanFallback(drone) && SwitchFreshNativeIfSafe(drone, "unregister_" + reason); }
+                catch (Exception e) { log("state=unregister_native_fallback_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name); }
+                if (!handedOff)
+                {
+                    // Keep every record field, including active clearance, until the live custom state can hand off.
+                    log("state=unregister_retained pid=" + Pid(drone) + " reason=native_handoff_failed");
+                    return;
+                }
+                r!.state = null;
+            }
+        }
         if (r != null)
             ClearLaunchClearance(r);
-        if (r != null && r.state != null && context.CanFallback(drone))
-            try { SwitchFreshNativeIfSafe(drone, "unregister_" + reason); }
-            catch (Exception e) { log("state=unregister_native_fallback_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name); }
         try { UnbindMissionMissileHandlers(drone, r); }
         catch (Exception e) { log("state=unregister_unbind_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name); }
         registered.Remove(drone);
@@ -933,7 +1010,10 @@ internal sealed class WingmanAiManager
             reason = "no_leader";
             return false;
         }
-        return context.RuntimeEligible(d, leader, out reason);
+        bool eligible = context.RuntimeEligible(d, leader, out reason);
+        if (!eligible && (reason == "leader" || reason.StartsWith("leader_", StringComparison.Ordinal)))
+            reason = "leader_unavailable";
+        return eligible;
     }
     internal bool TryGetSeparation(Aircraft d, PilotBaseState caller, out SeparationDirective directive)
     {
@@ -950,13 +1030,17 @@ internal sealed class WingmanAiManager
             Log("follow_stopped", d, reason);
         }
     }
+    // A formation controller can temporarily loiter without changing the group's AUTO mode or its override.
+    // In particular, an explicit FOLLOW remains FOLLOW and resumes when the leader returns.
     internal void RequestLoiter(Aircraft d, PilotBaseState c, string reason)
     {
-        if (!RuntimeOwns(d, c, out _) || mode != WingmanMode.Follow)
+        if (!RuntimeOwns(d, c, out _) || !records.TryGetValue(d, out Record r))
             return;
-        followInhibitUntil = Time.realtimeSinceStartup + 30f;
-        Log("wingman_mode_candidate", d, reason);
-        SetMode(WingmanMode.Loiter);
+        r.followFallbackActive = true;
+        if (reason == "infeasible_min_throttle")
+            r.followFallbackUntil = Mathf.Max(r.followFallbackUntil, Time.realtimeSinceStartup + 30f);
+        Log("wingman_follow_fallback", d, reason);
+        ApplyDesired(d, r, "follow_fallback_" + reason);
     }
     internal void LogAvoidanceEnter(Aircraft d, FormationSlot s, SeparationDirective x) =>
         log(string.Format(CultureInfo.InvariantCulture,
@@ -1023,30 +1107,17 @@ internal sealed class WingmanAiManager
     }
     internal void Cleanup()
     {
-        foreach (KeyValuePair<Aircraft, Record> pair in new List<KeyValuePair<Aircraft, Record>>(records))
-        {
-            Aircraft d = pair.Key;
-            Record r = pair.Value;
-            UnbindMissionMissileHandlers(d, r);
-            ClearLaunchClearance(r);
-            if (r.returningToBase)
-                continue;
-            ClearCapRecord(r); ClearCasRecord(r); ClearStrikeRecord(r); r.mission = WingmanMission.None;
-            if (r.state == null)
-                continue;
-            PilotBaseState old = r.state;
-            r.antiShipRadarThreat = null; r.state = null;
-            SwitchFreshNativeIfSafe(d, "cleanup");
-            if (d != null && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
-                d.pilots[0].currentState != old)
-                CancelOnly(old);
-        }
-        records.Clear();
+        // Reuse Unregister's live-state handoff invariant.  A failed handoff leaves its record in place for retry.
+        foreach (Aircraft drone in new List<Aircraft>(records.Keys))
+            Unregister(drone, "cleanup");
+        if (records.Count != 0)
+            return;
         registered.Clear();
         rejected.Clear();
         separation.Clear();
         hullEnvelopeLogged.Clear();
         activeLeader = null;
+        leaderAvailable = false;
         hasAnchor = hasRawLeader = false;
         anchor = rawLeader = default;
         anchorVelocity = Vector3.zero;
@@ -1055,7 +1126,7 @@ internal sealed class WingmanAiManager
         modeInitialized = false;
         candidateSince = -1f;
         lastSampleTime = 0f;
-        epoch = epochTime = followInhibitUntil = 0f;
+        epoch = epochTime = 0f;
         jumpLatched = false;
         nextSample = nextReconcile = nextCombatScan = 0f;
     }
@@ -1107,10 +1178,11 @@ internal sealed class WingmanAiManager
         nextSample = Time.realtimeSinceStartup + .2f;
         if (context.TryGetLeader(out Aircraft leader))
         {
+            leaderAvailable = true;
             if (activeLeader != leader)
             {
                 activeLeader = leader;
-                followInhibitUntil = 0f;
+                leaderAvailable = true;
                 candidateSince = -1f;
                 hasRawLeader = hasAnchor = false;
                 Log("active_leader_changed", leader, "current");
@@ -1152,10 +1224,9 @@ internal sealed class WingmanAiManager
                 anchorRadarAlt = leader.radarAlt + 300f;
             }
             float speed = Vector3.ProjectOnPlane(leader.rb.velocity, Vector3.up).magnitude;
-            WingmanMode wanted = Time.realtimeSinceStartup < followInhibitUntil ? WingmanMode.Loiter
-                                 : speed >= 120f ? WingmanMode.Follow
-                                 : speed <= 90f ? WingmanMode.Loiter
-                                                : (modeInitialized ? mode : WingmanMode.Loiter);
+            WingmanMode wanted = speed >= 120f ? WingmanMode.Follow
+                              : speed <= 90f ? WingmanMode.Loiter
+                                              : (modeInitialized ? mode : WingmanMode.Loiter);
             if (!modeInitialized)
             {
                 mode = wanted;
@@ -1180,9 +1251,26 @@ internal sealed class WingmanAiManager
         }
         else if (hasAnchor)
         {
+            leaderAvailable = false;
             reporter.LeaderMissing();
+            // Keep the last leader reference so recovery of the same owner preserves the anchor and epoch.
+            // AUTO aircraft still use the normal mode hysteresis; explicit FOLLOW falls back only for that record.
             SetMode(WingmanMode.Loiter);
+            foreach (KeyValuePair<Aircraft, Record> pair in records)
+                if (pair.Value.modeOverride == DroneModeOverride.Follow && !pair.Value.followFallbackActive)
+                {
+                    pair.Value.followFallbackActive = true;
+                    ApplyDesired(pair.Key, pair.Value, "leader_missing");
+                }
         }
+        if (leaderAvailable && activeLeader != null)
+            foreach (KeyValuePair<Aircraft, Record> pair in records)
+                if (pair.Value.followFallbackActive && Time.realtimeSinceStartup >= pair.Value.followFallbackUntil &&
+                    context.RuntimeEligible(pair.Key, activeLeader, out _))
+                {
+                    pair.Value.followFallbackActive = false;
+                    ApplyDesired(pair.Key, pair.Value, "leader_recovered");
+                }
         BuildSeparation();
     }
     private void BuildSeparation()
@@ -1190,9 +1278,9 @@ internal sealed class WingmanAiManager
         separation.Clear();
         List<Kinematics> all = new List<Kinematics>();
         LeaderHullEnvelope envelope = default;
-        if (activeLeader != null)
+        if (leaderAvailable && activeLeader != null)
             envelope = BuildLeaderHullEnvelope(activeLeader);
-        if (activeLeader != null && TryKinematics(activeLeader, -1, true, out Kinematics lead))
+        if (leaderAvailable && activeLeader != null && TryKinematics(activeLeader, -1, true, out Kinematics lead))
             all.Add(lead);
         foreach (KeyValuePair<Aircraft, Record> pair in records)
             if (!pair.Value.returningToBase && !context.HasPlayerAssociation(pair.Key) &&
@@ -1355,7 +1443,7 @@ internal sealed class WingmanAiManager
         foreach (KeyValuePair<Aircraft, Record> pair in new List<KeyValuePair<Aircraft, Record>>(records))
             ApplyDesired(pair.Key, pair.Value, "mode_change");
     }
-    private void ApplyDesired(Aircraft d, Record r, string reason)
+    private void ApplyDesired(Aircraft d, Record r, string reason, bool allowNativeLanding = false)
     {
         if (r.returningToBase || d == null)
             return;
@@ -1364,6 +1452,19 @@ internal sealed class WingmanAiManager
             ClearLaunchClearance(r);
             return;
         }
+        if (r.state != null && !InstalledStateOwns(d, r))
+        {
+            // Detach our stale state.  Admission below decides whether the current native state is safe to reclaim.
+            PilotBaseState displaced = r.state;
+            r.state = null;
+            ClearLaunchClearance(r);
+            CancelOnly(displaced);
+            Log("wingman_external_state", d, "current=" + CurrentPilotStateName(d));
+        }
+        if (r.state == null && !context.EligibleForInstall(d, out _) &&
+            !(allowNativeLanding && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
+              d.pilots[0].currentState is AIPilotLandingState))
+            return;
         if (r.launchClearanceActive)
         {
             if (r.state is FixedWingDroneLaunchClearanceState clearance && d.pilots != null &&
@@ -1410,6 +1511,7 @@ internal sealed class WingmanAiManager
         WingmanDesired desired = CombatCommandLogic.ResolveDesired(context.CombatEnabled, r.mission,
                                                                     targetReady,
                                                                     r.modeOverride, mode == WingmanMode.Follow);
+        desired = CombatCommandLogic.ResolveFollowFallback(desired, r.followFallbackActive);
         if (desired == WingmanDesired.AirToAir)
         {
             Aircraft target = r.airToAirTarget!;
@@ -1461,12 +1563,24 @@ internal sealed class WingmanAiManager
     {
         try
         {
-            string current = StateName(drone.pilots[0].currentState);
-            if (current == r.lastRtbPilotState)
-                return;
-            log("state=rtb_pilot_state pid=" + Pid(drone) + " from=" +
-                (r.lastRtbPilotState ?? "none") + " to=" + current);
-            r.lastRtbPilotState = current;
+            PilotBaseState? state = drone.pilots[0].currentState;
+            string current = StateName(state);
+            if (current != r.lastRtbPilotState)
+            {
+                log("state=rtb_pilot_state pid=" + Pid(drone) + " from=" +
+                    (r.lastRtbPilotState ?? "none") + " to=" + current);
+                r.lastRtbPilotState = current;
+            }
+            // Landing may pass through taxi/completion states.  Only a player takeover or native combat proves
+            // that landing released ownership; other native states remain RTB-owned and are merely observed.
+            if ((context.HasPlayerAssociation(drone) || state is AIPilotCombatModes) && !drone.HasEjected() &&
+                !drone.disabled && drone.unitState != Unit.UnitState.Abandoned && drone.unitState != Unit.UnitState.Returned)
+            {
+                ReleaseNativeLandingUsage(drone, drone.pilots[0].AILandingState, "rtb_native_exit");
+                r.returningToBase = false;
+                r.lastRtbPilotState = null;
+                log("state=rtb_native_exit pid=" + Pid(drone) + " current=" + current);
+            }
         }
         catch
         {
@@ -1493,6 +1607,11 @@ internal sealed class WingmanAiManager
         ApplyDesired(drone, r, reason);
         return true;
     }
+    private static bool InstalledStateOwns(Aircraft d, Record r) =>
+        r.state != null && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
+        d.pilots[0].currentState == r.state;
+    private static string CurrentPilotStateName(Aircraft d) =>
+        d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null ? StateName(d.pilots[0].currentState) : "missing";
     private bool SwitchTo(Aircraft d, Record r, PilotBaseState next, string reason)
     {
         if (r.returningToBase || r.launchClearanceActive && next is not FixedWingDroneLaunchClearanceState)
@@ -1562,6 +1681,19 @@ internal sealed class WingmanAiManager
         }
         return true;
     }
+    // Native landing tracks both a runway reservation and Airbase.ControlledAircraft usage.
+    private void ReleaseNativeLandingUsage(Aircraft drone, AIPilotLandingState landing, string source)
+    {
+        try
+        {
+            landing.runwayUsage.Runway.DeregisterLanding(drone);
+            landing.runwayUsage.Runway.airbase.RpcRegisterUsage(drone, false, landing.runwayUsage.Runway.index);
+        }
+        catch (Exception e)
+        {
+            log("state=" + source + "_release_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name);
+        }
+    }
     internal bool PrepareReturningFqForTakeControl(Aircraft drone, out string reason)
     {
         reason = "";
@@ -1570,16 +1702,7 @@ internal sealed class WingmanAiManager
             reason = "rtb_in_progress";
             return false;
         }
-        try
-        {
-            Pilot pilot = drone.pilots[0];
-            Airbase.Runway runway = pilot.AILandingState.runwayUsage.Runway;
-            runway.DeregisterLanding(drone);
-        }
-        catch (Exception e)
-        {
-            log("state=rtb_takeover_deregister_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name);
-        }
+        ReleaseNativeLandingUsage(drone, drone.pilots[0].AILandingState, "rtb_takeover");
         r.returningToBase = false;
         r.lastRtbPilotState = null;
         return true;
@@ -1610,7 +1733,8 @@ internal sealed class WingmanAiManager
         }
         Record r = records[d];
         fixedPoint = r.mission == WingmanMission.Cap && r.hasCapAnchor || r.hasLoiterPoint;
-        revision = r.mission == WingmanMission.Cap && r.hasCapAnchor ? r.capRevision : r.loiterRevision;
+        // CAP and CRUISE own distinct counters; this shared generation cannot collide across their handoff.
+        revision = r.loiterAnchorRevision;
         if (fixedPoint)
         {
             GlobalPosition point = r.mission == WingmanMission.Cap && r.hasCapAnchor ? r.capAnchor : r.loiterPoint;
@@ -1730,7 +1854,7 @@ internal sealed class WingmanAiManager
         }
         return false;
     }
-    private static StrikeWeaponStatus MissionWeaponStatus(Aircraft defender, WingmanMission mission)
+    internal static StrikeWeaponStatus MissionWeaponStatus(Aircraft defender, WingmanMission mission)
     {
         bool compatible = false, ammo = false, waiting = false;
         foreach (WeaponStation station in defender.weaponStations)
@@ -1858,7 +1982,7 @@ internal sealed class WingmanAiManager
     }
     private static void ClearCapRecord(Record r)
     {
-        r.hasCapAnchor = false; r.capAnchor = default; r.capRevision++;
+        r.hasCapAnchor = false; r.capAnchor = default; r.capRevision++; r.loiterAnchorRevision++;
         r.capTarget = null; r.capTargetId = null; r.capTargetIsRetaliation = false;
     }
     private void ClearCapTarget(Aircraft drone, Record r, string reason)
@@ -1931,6 +2055,7 @@ internal sealed class WingmanAiManager
     {
         r.strikeTargetIds = Array.Empty<PersistentID>();
         ClearStrikeTarget(r);
+        r.strikeReleasedTargetIds.Clear();
         r.strikeRevision++;
     }
     private void UnbindMissionMissileHandlers(Aircraft drone, Record? r)
@@ -1954,6 +2079,8 @@ internal sealed class WingmanAiManager
         internal readonly FormationSlot slot;
         internal readonly HashSet<PersistentID> attemptedDefenseThreats = new HashSet<PersistentID>();
         internal PilotBaseState? state;
+        internal bool followFallbackActive;
+        internal float followFallbackUntil;
         internal bool returningToBase;
         internal string? lastRtbPilotState;
         internal bool initialStateReported;
@@ -1973,7 +2100,7 @@ internal sealed class WingmanAiManager
         internal DroneModeOverride modeOverride = DroneModeOverride.Auto;
         internal bool hasLoiterPoint;
         internal GlobalPosition loiterPoint;
-        internal int loiterRevision;
+        internal int loiterAnchorRevision;
         internal Ship? antiShipTarget;
         internal string? antiShipTargetId;
         internal Missile? antiShipRadarThreat;
@@ -1992,6 +2119,7 @@ internal sealed class WingmanAiManager
         internal readonly List<Missile> activeCasLaserMissiles = new List<Missile>();
         internal PersistentID[] strikeTargetIds = Array.Empty<PersistentID>();
         internal int strikeRevision;
+        internal readonly HashSet<PersistentID> strikeReleasedTargetIds = new HashSet<PersistentID>();
         internal Unit? strikeTarget;
         internal string? strikeTargetId;
         internal Record(int ordinal, float phase, FormationSlot slot, int groupId, int groupSlot)

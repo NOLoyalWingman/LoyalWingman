@@ -12,7 +12,8 @@ internal sealed class FixedWingDroneStrikeState : PilotBaseState
     private StrikeBombStage stage = StrikeBombStage.BombVolley;
     private float targetHeight, releasedAt = float.NegativeInfinity, breakOffUntil;
     private StrikeBombWeaponKind releasedKind = StrikeBombWeaponKind.None;
-    private readonly List<PersistentID> releasedTargetIds = new List<PersistentID>();
+    // Owned by the manager's revision-scoped STRIKE progress, so defensive state changes do not lose releases.
+    private readonly HashSet<PersistentID> releasedTargetIds;
     private StrikeBombWeaponKind lastReleasedKind = StrikeBombWeaponKind.None;
     private float lastGlideReleasedAt = float.NegativeInfinity;
     private float glideReattackMinRange;
@@ -26,13 +27,16 @@ internal sealed class FixedWingDroneStrikeState : PilotBaseState
         this.manager = manager;
         this.drone = drone;
         Revision = revision;
+        releasedTargetIds = manager.GetStrikeReleasedTargetIds(drone, revision);
     }
 
     public override void EnterState(Pilot pilot)
     {
         targetHeight = drone.radarAlt;
         ResetGlideState();
-        Log("strike_enter revision=" + Revision);
+        // A resumed state has no local release timing, but manager progress still identifies targets to consume.
+        postReleaseStarted = releasedTargetIds.Count > 0;
+        Log("strike_enter revision=" + Revision + " released_count=" + releasedTargetIds.Count);
     }
 
     public override void UpdateState(Pilot pilot) { }
@@ -53,12 +57,12 @@ internal sealed class FixedWingDroneStrikeState : PilotBaseState
                 else BreakOff(autopilot);
                 return;
             }
-            if (postReleaseStarted && releasedKind == StrikeBombWeaponKind.None && Time.timeSinceLevelLoad >= breakOffUntil && releasedTargetIds.Count > 0)
+            if (postReleaseStarted && releasedKind == StrikeBombWeaponKind.None && releasedTargetIds.Count > 0)
             {
-                while (releasedTargetIds.Count > 0)
+                foreach (PersistentID releasedTargetId in new List<PersistentID>(releasedTargetIds))
                 {
-                    if (!manager.ConsumeStrikeTarget(drone, releasedTargetIds[0])) return;
-                    releasedTargetIds.RemoveAt(0);
+                    if (!manager.ConsumeStrikeTarget(drone, releasedTargetId)) return;
+                    releasedTargetIds.Remove(releasedTargetId);
                 }
                 target = null; postReleaseStarted = false; lastReleasedKind = StrikeBombWeaponKind.None;
             }
@@ -245,8 +249,9 @@ internal sealed class FixedWingDroneStrikeState : PilotBaseState
         bool stationReady = StationStillReady(station, StrikeBombWeaponKind.GlideBomb);
         float elapsedSinceGlide = Time.timeSinceLevelLoad - lastGlideReleasedAt;
         string reason = StrikeBombingLogic.GlideGateReason(distance, info.targetRequirements.minRange, obscured, height,
-            drone.speed, angle, info.targetRequirements.minAlignment, stationReady, elapsedSinceGlide);
-        StrikeRippleDecision decision = ResolveRipple(StrikeBombingLogic.ResolveGlideRipple(geometryValid, stationReady, elapsedSinceGlide));
+            drone.speed, angle, info.targetRequirements.minAlignment, stationReady, hasGlideRelease, elapsedSinceGlide);
+        StrikeRippleDecision decision = ResolveRipple(StrikeBombingLogic.ResolveGlideRipple(geometryValid, stationReady,
+            hasGlideRelease, elapsedSinceGlide));
         LogGlideGate(station, distance, info.targetRequirements.minRange, height, drone.speed, angle,
             info.targetRequirements.minAlignment, obscured, decision, reason);
         if (decision == StrikeRippleDecision.ContinueIngress) return;
@@ -264,8 +269,9 @@ internal sealed class FixedWingDroneStrikeState : PilotBaseState
         stationReady = StationStillReady(station, StrikeBombWeaponKind.GlideBomb);
         elapsedSinceGlide = Time.timeSinceLevelLoad - lastGlideReleasedAt;
         reason = StrikeBombingLogic.GlideGateReason(distance, info.targetRequirements.minRange, obscured, height,
-            drone.speed, angle, info.targetRequirements.minAlignment, stationReady, elapsedSinceGlide);
-        decision = ResolveRipple(StrikeBombingLogic.ResolveGlideRipple(geometryValid, stationReady, elapsedSinceGlide));
+            drone.speed, angle, info.targetRequirements.minAlignment, stationReady, hasGlideRelease, elapsedSinceGlide);
+        decision = ResolveRipple(StrikeBombingLogic.ResolveGlideRipple(geometryValid, stationReady,
+            hasGlideRelease, elapsedSinceGlide));
         LogGlideGate(station, distance, info.targetRequirements.minRange, height, drone.speed, angle,
             info.targetRequirements.minAlignment, obscured, decision, reason);
         if (decision == StrikeRippleDecision.BreakOff) { BeginPostRelease(autopilot, "glide_recheck_invalid"); return; }

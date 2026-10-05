@@ -46,8 +46,12 @@ internal sealed class FixedWingDroneFollowState : PilotBaseState
             return;
         try
         {
-            if (!manager.TryGetGuidance(drone, this, out Aircraft leader, out _))
+            if (!manager.TryGetGuidance(drone, this, out Aircraft leader, out string guidanceReason))
+            {
+                if (guidanceReason == "no_leader" || guidanceReason == "leader_unavailable")
+                    manager.RequestLoiter(drone, this, "leader_missing");
                 return;
+            }
             if (controllerLeader != leader)
             {
                 ResetController();

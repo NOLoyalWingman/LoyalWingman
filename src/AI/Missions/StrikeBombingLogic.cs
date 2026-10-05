@@ -65,7 +65,8 @@ internal static class StrikeBombingLogic
     internal static float GlideReleaseGradient(float heightAboveTarget, float speed, float distance) =>
         (heightAboveTarget + speed * speed * .03f) / distance;
     internal static string GlideGateReason(float distance, float minRange, bool obscured, float heightAboveTarget,
-        float speed, float targetAngle, float minAlignment, bool stationReady, float elapsedSinceGlide)
+        float speed, float targetAngle, float minAlignment, bool stationReady, bool hasPriorGlideRelease,
+        float elapsedSinceGlide)
     {
         if (!Finite(distance) || distance <= 0f) return "invalid_distance";
         if (!Finite(minRange)) return "invalid_min_range";
@@ -78,15 +79,16 @@ internal static class StrikeBombingLogic
         if (!(GlideReleaseGradient(heightAboveTarget, speed, distance) > .2f)) return "insufficient_gradient";
         if (targetAngle >= minAlignment) return "misaligned";
         if (!stationReady) return "station_not_ready";
-        return !Finite(elapsedSinceGlide) || elapsedSinceGlide <= 5f ? "glide_spacing" : "fire_ready";
+        return hasPriorGlideRelease && (!Finite(elapsedSinceGlide) || elapsedSinceGlide <= 5f) ? "glide_spacing" : "fire_ready";
     }
     internal static bool InitialGlideMissedWindow(bool hasPriorGlideRelease, float distance, float minRange) =>
         !hasPriorGlideRelease && Finite(distance) && Finite(minRange) && distance > 0f && distance < minRange;
     internal static bool GlideMissedWindowCanResume(float distance, float minRange) =>
         Finite(distance) && Finite(minRange) && distance >= minRange;
-    internal static StrikeRippleDecision ResolveGlideRipple(bool geometryValid, bool stationReady, float elapsedSinceGlide) =>
-        !geometryValid || !stationReady || !Finite(elapsedSinceGlide) ? StrikeRippleDecision.BreakOff :
-        elapsedSinceGlide > 5f ? StrikeRippleDecision.FireNext : StrikeRippleDecision.ContinueIngress;
+    internal static StrikeRippleDecision ResolveGlideRipple(bool geometryValid, bool stationReady,
+        bool hasPriorGlideRelease, float elapsedSinceGlide) =>
+        !geometryValid || !stationReady || (hasPriorGlideRelease && !Finite(elapsedSinceGlide)) ? StrikeRippleDecision.BreakOff :
+        !hasPriorGlideRelease || elapsedSinceGlide > 5f ? StrikeRippleDecision.FireNext : StrikeRippleDecision.ContinueIngress;
     internal static StrikeRippleDecision PreserveInitialIngress(StrikeRippleDecision decision, bool hasPendingRelease) =>
         decision == StrikeRippleDecision.BreakOff && !hasPendingRelease ? StrikeRippleDecision.ContinueIngress : decision;
     internal static bool NativeBombFreshBreakOff(float travelTime, float fallTime) =>

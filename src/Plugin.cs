@@ -865,7 +865,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
     internal static void TryBeginAnimatedCaptureLock(DroneCarrierPortWeapon port, Aircraft candidate, long token) =>
         activeInstance?.TryBeginAnimatedCaptureLockInternal(port, candidate, token);
-    internal static void AbortAnimatedCapture(DroneCarrierPortWeapon port, Aircraft candidate, long token,
+    internal static void AbortAnimatedCapture(DroneCarrierPortWeapon port, Aircraft? candidate, long token,
                                               AnimatedPortMotion motion, string reason) =>
         activeInstance?.AbortAnimatedCaptureInternal(port, candidate, token, motion, reason);
     internal static void CancelPendingAnimatedPortRecovery(DroneCarrierPortWeapon port, Aircraft candidate) =>
@@ -876,9 +876,11 @@ public sealed class Plugin : BaseUnityPlugin
         if (TryGetLocalSession(out CarrierSession session) && ReferenceEquals(session.Player.Aircraft, candidate))
         { session.State = CarrierSessionState.Complete; session.Busy = false; session.SwitchCoroutine = null; session.Manager.Reconcile("animated_port_reset"); }
     }
-    private void AbortAnimatedCaptureInternal(DroneCarrierPortWeapon port, Aircraft candidate, long token, AnimatedPortMotion motion, string reason)
+    private void AbortAnimatedCaptureInternal(DroneCarrierPortWeapon port, Aircraft? candidate, long token, AnimatedPortMotion motion, string reason)
     {
-        Log("state=recovery_aborted_" + reason + " candidate_pid=" + PidOf(candidate) + " raw_distance=" + Mathf.Sqrt(port.AnimatedCaptureRawSquaredDistance) + " occupied=" + port.AnimatedCaptureTriggerOccupied + " root=" + candidate.transform.position + " pose=" + port.AnimatedRecoveryPosePosition);
+        if (port == null || !port.IsAnimatedCaptureOperation(token, candidate, motion)) return;
+        Log("state=recovery_aborted_" + reason + " candidate_pid=" + PidOf(candidate) + " raw_distance=" + Mathf.Sqrt(port.AnimatedCaptureRawSquaredDistance) + " occupied=" + port.AnimatedCaptureTriggerOccupied +
+            " root=" + (candidate == null ? "none" : candidate.transform.position.ToString()) + " pose=" + port.AnimatedRecoveryPosePosition);
         FailAnimatedCapture(port, candidate, token, motion, reason);
     }
     private void TryBeginAnimatedCaptureLockInternal(DroneCarrierPortWeapon port, Aircraft candidate, long token)
@@ -1162,8 +1164,9 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void FailAnimatedCapture(DroneCarrierPortWeapon port, Aircraft? candidate, long token, AnimatedPortMotion expectedMotion, string reason)
     {
-        TryRequestAnimatedRetract(port, token, expectedMotion, AnimatedPortMotion.RetractingCapture, reason);
         bool playerPending = port.State == DroneCarrierPortState.PlayerReserved || port.State == DroneCarrierPortState.PlayerHandoff;
+        if (!TryRequestAnimatedRetract(port, token, expectedMotion, AnimatedPortMotion.RetractingCapture, reason))
+            port.InvalidateAnimatedCapture(token, candidate, expectedMotion);
         if (playerPending)
         {
             if (candidate != null && TryGetLocalSession(out CarrierSession session) && ReferenceEquals(session.Player.Aircraft, candidate) &&
@@ -1193,13 +1196,12 @@ public sealed class Plugin : BaseUnityPlugin
             drone.onDisableUnit -= OnDroneDisabled;
     }
 
-    private void ClearDroneSubscriptions(CarrierSession s, HashSet<Aircraft>? protectedPending = null)
+    private void ClearDroneSubscriptions(CarrierSession s)
     {
         foreach (Aircraft drone in s.SubscribedDrones)
-            if (drone != null && (protectedPending == null || !protectedPending.Contains(drone)))
+            if (drone != null)
                 drone.onDisableUnit -= OnDroneDisabled;
-        if (protectedPending == null) s.SubscribedDrones.Clear();
-        else s.SubscribedDrones.RemoveWhere(drone => !protectedPending.Contains(drone));
+        s.SubscribedDrones.Clear();
     }
 
     private void OnDroneDisabled(Unit disabledUnit)
@@ -1329,12 +1331,9 @@ public sealed class Plugin : BaseUnityPlugin
             HandlePreSwitchFailure(s, oldAircraft, target, direction, "carrier_cruise_restore_failed");
             yield break;
         }
-        if (takeOverReturningFq && !s.Manager.PrepareReturningFqForTakeControl(target, out reason))
-        {
-            HandlePreSwitchFailure(s, oldAircraft, target, direction, reason);
-            yield break;
-        }
-        if (s.Manager.IsRegistered(target) && !s.Manager.Suspend(target, "switch_target"))
+        // A returning FQ has a native landing state, so Suspend deliberately rejects it.
+        // Its landing reservation must remain live until the ownership handoff is verified.
+        if (!takeOverReturningFq && s.Manager.IsRegistered(target) && !s.Manager.Suspend(target, "switch_target"))
         {
             s.Context.Log("state=follow_suspend_failed reason=switch_target target=" + NameOf(target));
             s.State = CarrierSessionState.Complete;
@@ -1360,6 +1359,8 @@ public sealed class Plugin : BaseUnityPlugin
             InitializeVerifiedTargetCam(target);
             RefreshVerifiedWeaponStatus(target);
             OwnershipDiagnostics.Snapshot(Logger, "verified", "success", s.Player, oldAircraft, target);
+            if (takeOverReturningFq && !s.Manager.PrepareReturningFqForTakeControl(target, out string rtbReason))
+                s.Context.Log("state=rtb_takeover_commit_failed target=" + NameOf(target) + " reason=" + rtbReason);
             PreserveNativeAi(oldAircraft);
             if (AircraftSwitchLogic.ShouldInstallCarrierCruise(ReferenceEquals(oldAircraft, s.Home), target.definition?.jsonKey == droneKey.Value))
                 s.Cruise.TryInstall(s.Player, oldAircraft, target);
@@ -1733,6 +1734,10 @@ public sealed class Plugin : BaseUnityPlugin
         }
         else if (ownership == Ownership.Target)
         {
+            // The backend may report failure after transferring authority.  Finalize a
+            // returning target here too, but only if RTB ownership is still recorded.
+            if (s.Manager.IsReturningToBase(target) && !s.Manager.PrepareReturningFqForTakeControl(target, out string rtbReason))
+                s.Context.Log("state=rtb_takeover_commit_failed target=" + NameOf(target) + " reason=" + rtbReason);
             PreserveNativeAi(oldAircraft);
             s.State = CarrierSessionState.Complete;
             s.NextSwitchTime = Time.realtimeSinceStartup + SwitchCooldownSeconds();
@@ -2688,11 +2693,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         CarrierSessionState priorState = s.State;
         Aircraft[] roster = s.Roster.ToArray();
-        var protectedPending = new HashSet<Aircraft>();
-        foreach (Aircraft drone in roster)
-            if (drone != null && DroneCarrierPortLogic.ShouldProtectPendingPlayerRecovery(
-                DroneCarrierPortWeapon.IsPendingPlayerHandoffFor(drone))) protectedPending.Add(drone);
-        ClearDroneSubscriptions(s, protectedPending);
+        ClearDroneSubscriptions(s);
         RestoreLeases(s);
 
         bool serverActive = NetworkManagerNuclearOption.i != null && NetworkManagerNuclearOption.i.Server.Active;
@@ -2700,18 +2701,20 @@ public sealed class Plugin : BaseUnityPlugin
         {
             if (drone == null || drone == s.Home)
                 continue;
-            if (protectedPending.Contains(drone))
-            {
+            // The player aircraft must survive teardown, but it still has to be unlinked
+            // from the session before removal.  Cancel its provisional port transaction
+            // before detaching it, rather than retaining its routes/subscriptions.
+            bool pendingPlayerRecovery = DroneCarrierPortLogic.ShouldProtectPendingPlayerRecovery(
+                DroneCarrierPortWeapon.IsPendingPlayerHandoffFor(drone));
+            if (pendingPlayerRecovery)
                 DroneCarrierPortWeapon.CancelPendingPlayerHandoffFor(drone);
-                continue;
-            }
             if (sessionRegistry != null && !sessionRegistry.TryDetachDrone(s, drone, reason, out string detachReason))
                 s.Context.Log("event=session_detach_failed drone_pid=" + PidOf(drone) + " reason=" + detachReason);
             bool safelyDespawn = (priorState == CarrierSessionState.PreSwitch || priorState == CarrierSessionState.Switching) &&
                                  CanSafelyDespawn(drone, s.Player);
             bool failClosedDespawn = MultiplayerCleanupLogic.ShouldFailClosedDespawn(
                 GameManager.gameState == GameState.SinglePlayer, serverActive, HasAnyPlayerAssociation(drone, s.Player));
-            if (safelyDespawn || failClosedDespawn)
+            if (!pendingPlayerRecovery && (safelyDespawn || failClosedDespawn))
                 Despawn(drone);
         }
 

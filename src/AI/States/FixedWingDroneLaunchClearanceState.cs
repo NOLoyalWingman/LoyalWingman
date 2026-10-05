@@ -24,7 +24,7 @@ internal sealed class FixedWingDroneLaunchClearanceState : PilotBaseState
 
     public override void EnterState(Pilot pilot)
     {
-        if (cancelled)
+        if (cancelled || pilot.currentState != this)
             return;
         drone.flightAssist = true;
         manager.Disarm(drone);
@@ -40,7 +40,8 @@ internal sealed class FixedWingDroneLaunchClearanceState : PilotBaseState
 
     public override void FixedUpdateState(Pilot pilot)
     {
-        if (cancelled || completionRequested)
+        if (cancelled || completionRequested ||
+            !manager.OwnsLaunchClearance(drone, this, carrier, carrierId))
             return;
         try
         {
@@ -86,6 +87,9 @@ internal sealed class FixedWingDroneLaunchClearanceState : PilotBaseState
     {
         try
         {
+            if (drone.pilots == null || drone.pilots.Length == 0 || drone.pilots[0] == null ||
+                drone.pilots[0].currentState != this)
+                return;
             ControlInputs inputs = drone.GetInputs();
             inputs.brake = 0f;
             inputs.throttle = 0f;

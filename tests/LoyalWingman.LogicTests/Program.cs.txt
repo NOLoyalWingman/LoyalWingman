@@ -66,6 +66,15 @@ internal static class Program
         Equal(WingmanDesired.Loiter,
               CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Auto, false),
               "auto follows global loiter");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveFollowFallback(WingmanDesired.Follow, true),
+              "active fallback projects follow to loiter");
+        Equal(WingmanDesired.Follow,
+              CombatCommandLogic.ResolveFollowFallback(WingmanDesired.Follow, false),
+              "inactive fallback retains follow projection");
+        Equal(WingmanDesired.Loiter,
+              CombatCommandLogic.ResolveFollowFallback(WingmanDesired.Loiter, true),
+              "fallback retains loiter projection");
         Equal(WingmanDesired.Follow,
               CombatCommandLogic.ResolveDesired(false, WingmanMission.None, false, DroneModeOverride.Follow, false),
               "follow override wins");
@@ -886,15 +895,28 @@ internal static class Program
         Equal(true, StrikeBombingLogic.GlideGeometryValid(100f, 100f, false, 21f, 0f, 9f, 10f), "ripple glide geometry valid");
         Equal(.23f, StrikeBombingLogic.GlideReleaseGradient(20f, 10f, 100f), "glide gradient uses height plus speed term");
         Equal(false, StrikeBombingLogic.GlideGeometryValid(100f, 100f, false, 20f, 0f, 9f, 10f), "glide gradient exact boundary rejects");
-        Equal("insufficient_gradient", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 20f, 0f, 9f, 10f, true, 6f), "glide gate reports gradient hold");
-        Equal("obscured", StrikeBombingLogic.GlideGateReason(100f, 100f, true, 21f, 0f, 9f, 10f, true, 6f), "glide gate reports obscured hold");
-        Equal("station_not_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, false, 6f), "glide gate reports readiness hold");
-        Equal("glide_spacing", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, 5f), "glide gate reports ripple spacing hold");
-        Equal("fire_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, 5.1f), "glide gate reports ready fire");
-        Equal(StrikeRippleDecision.FireNext, StrikeBombingLogic.ResolveGlideRipple(true, true, 5.1f), "ripple glide fires after interval");
-        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.ResolveGlideRipple(true, true, 5f), "ripple glide only interval waits");
-        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(false, true, 6f), "ripple glide geometry breaks");
-        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(true, false, 6f), "ripple glide readiness breaks");
+        Equal("insufficient_gradient", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 20f, 0f, 9f, 10f, true, false, 6f), "glide gate reports gradient hold");
+        Equal("obscured", StrikeBombingLogic.GlideGateReason(100f, 100f, true, 21f, 0f, 9f, 10f, true, false, 6f), "glide gate reports obscured hold");
+        Equal("station_not_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, false, false, 6f), "glide gate reports readiness hold");
+        Equal("glide_spacing", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, true, 5f), "glide gate reports ripple spacing hold");
+        Equal("fire_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, true, 5.1f), "glide gate reports ready fire");
+        foreach (float elapsed in new[] { float.PositiveInfinity, float.NaN })
+        {
+            Equal("fire_ready", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, false, elapsed),
+                  "first glide gate admits nonfinite elapsed");
+            Equal(StrikeRippleDecision.FireNext, StrikeBombingLogic.ResolveGlideRipple(true, true, false, elapsed),
+                  "first glide ripple admits nonfinite elapsed");
+            Equal("glide_spacing", StrikeBombingLogic.GlideGateReason(100f, 100f, false, 21f, 0f, 9f, 10f, true, true, elapsed),
+                  "prior glide gate rejects nonfinite elapsed");
+            Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(true, true, true, elapsed),
+                  "prior glide ripple rejects nonfinite elapsed");
+        }
+        Equal(StrikeRippleDecision.FireNext, StrikeBombingLogic.ResolveGlideRipple(true, true, true, 5.1f), "ripple glide fires after interval");
+        Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.ResolveGlideRipple(true, true, true, 5f), "ripple glide only interval waits");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(false, true, false, 6f), "first glide geometry breaks");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(false, true, true, 6f), "prior glide geometry breaks");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(true, false, false, 6f), "first glide readiness breaks");
+        Equal(StrikeRippleDecision.BreakOff, StrikeBombingLogic.ResolveGlideRipple(true, false, true, 6f), "prior glide readiness breaks");
         Equal(StrikeRippleDecision.ContinueIngress, StrikeBombingLogic.PreserveInitialIngress(StrikeRippleDecision.BreakOff, false), "initial glide geometry preserves ingress");
         Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 150f, 100f), "valid initial glide release does not latch");
         Equal(false, StrikeBombingLogic.InitialGlideMissedWindow(false, 100f, 100f), "initial glide range equality does not latch");

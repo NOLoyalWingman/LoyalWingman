@@ -56,6 +56,10 @@ internal sealed class FixedWingDroneAirToAirAttackState : PilotBaseState
                 launchStation = FindBestLaunchStation();
                 if (launchStation != null)
                     phase = Phase.Launch;
+                else if (IsExplicitAirToAir() &&
+                         WingmanAiManager.MissionWeaponStatus(drone, WingmanMission.AirToAir) is
+                         StrikeWeaponStatus.Missing or StrikeWeaponStatus.Exhausted)
+                    Complete("all_compatible_aam_exhausted");
                 return;
             }
             if (phase == Phase.Launch)
@@ -92,6 +96,11 @@ internal sealed class FixedWingDroneAirToAirAttackState : PilotBaseState
         Log("combat_suspend reason=" + reason);
         manager.Suspend(drone, "a2a_" + reason);
     }
+    private void Complete(string reason)
+    {
+        Log("combat_completion reason=" + reason);
+        manager.CompleteMission(drone, WingmanMission.AirToAir, reason);
+    }
     private bool Fire()
     {
         if (fireIssued)
@@ -112,6 +121,7 @@ internal sealed class FixedWingDroneAirToAirAttackState : PilotBaseState
         manager.CombatMissileAway(drone);
         return true;
     }
+    private bool IsExplicitAirToAir() => manager.TryGetAirToAirTarget(drone, out Aircraft assigned) && assigned == target;
     private WeaponStation? FindBestLaunchStation()
     {
         WeaponStation? best = null;

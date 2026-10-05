@@ -483,6 +483,18 @@ internal sealed class DroneCarrierPortWeapon : Weapon
         DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref nativeLaunchIssued);
     internal bool ConsumeAnimatedCaptureCompletion(long token) => HasAnimatedProvider && token == animatedOperationToken &&
         DroneCarrierPortLogic.TryConsumeAnimatedPortOnce(ref captureCompletionConsumed);
+    // The monitor and animation callbacks can outlive a provider/candidate.  Match the
+    // operation identity before cleanup so an old callback cannot cancel a newer capture.
+    internal bool IsAnimatedCaptureOperation(long token, Aircraft? candidate, AnimatedPortMotion expectedMotion) =>
+        token != 0 && token == animatedOperationToken && ReferenceEquals(candidate, reservedCandidate) &&
+        animatedMotion == expectedMotion;
+    internal bool InvalidateAnimatedCapture(long token, Aircraft? candidate, AnimatedPortMotion expectedMotion)
+    {
+        if (!IsAnimatedCaptureOperation(token, candidate, expectedMotion)) return false;
+        ResetAnimatedOperation();
+        Cancel();
+        return true;
+    }
     internal bool BeginAnimatedRetract(long token, AnimatedPortMotion expectedMotion, AnimatedPortMotion retractMotion) =>
         HasAnimatedProvider && token == animatedOperationToken && animatedMotion == expectedMotion &&
         (retractMotion == AnimatedPortMotion.RetractingRelease || retractMotion == AnimatedPortMotion.RetractingCapture) &&
@@ -531,9 +543,18 @@ internal sealed class DroneCarrierPortWeapon : Weapon
     private IEnumerator AnimatedCaptureMonitor(long token, Aircraft candidate)
     {
         yield return new WaitForFixedUpdate();
-        while (HasAnimatedProvider && token == animatedOperationToken && candidate == reservedCandidate &&
-               (animatedMotion == AnimatedPortMotion.ExtendingCapture || animatedMotion == AnimatedPortMotion.WaitingCapture))
+        while (true)
         {
+            // Provider loss or a destroyed candidate leaves no milestone to release the
+            // reservation.  Abort through the token-checked path before exiting.
+            if (!HasAnimatedProvider || candidate == null || candidate.rb == null)
+            {
+                Plugin.AbortAnimatedCapture(this, candidate, token, animatedMotion, "monitor_invalid");
+                yield break;
+            }
+            if (token != animatedOperationToken || candidate != reservedCandidate ||
+                (animatedMotion != AnimatedPortMotion.ExtendingCapture && animatedMotion != AnimatedPortMotion.WaitingCapture))
+                yield break;
             AnimatedCaptureRecoveryDecision decision = DroneCarrierPortLogic.ResolveAnimatedCaptureRecovery(
                 DroneCarrierPortLogic.NormalizeAnimatedCaptureSquaredDistance(
                     (candidate.transform.position - animatedBinding!.RecoveryPose.position).sqrMagnitude, IsInTrigger(candidate)),
