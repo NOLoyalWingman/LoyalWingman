@@ -22,11 +22,20 @@ The following entries record the historical `v0.0.2` prerelease work; they are n
 
 ## Readiness before asking to reopen or mark ready
 
-It is appropriate to ask for reopening or send a ready-for-review message only after all of the following are satisfied:
+**Current AI fix baseline reviewed:** `358509b99c2e5c1d4343beb9732c4d00292d2ec6`; implementation may follow. All runtime checks are pending. For every run, record the exact candidate commit and deployed `LoyalWingman.dll` SHA-256 (not the historical manifest hash), and retain both `BepInEx\LogOutput.log` and `%USERPROFILE%\AppData\LocalLow\Shockfront\NuclearOption\Player.log`. This is SP-first only; multiplayer remains unaccepted.
 
-- [ ] Deploy the exact new candidate that was tested and complete runtime acceptance for launch and control: Follow, A2A, Strike, RTB cancellation, takeover/recovery, lost leader/player handling, and scene cleanup.
-- [ ] Publish a new version and verify that its `LoyalWingman.dll` digest and download match the manifest validators.
-- [ ] Obtain explicit user approval before reopening PR #220 or sending a ready-for-review/merge message.
+| Pending runtime check | User action | Expected visible result to record |
+| --- | --- | --- |
+| [ ] First glide bomb and repeat interval | Release a wingman with a glide bomb, assign an eligible target, and watch the first attack; leave the target available for its next attack opportunity. | The first glide bomb is visibly released, and a later release occurs only after the normal repeat interval rather than immediately. |
+| [ ] STRIKE after defensive interruption | Give STRIKE multiple ground targets, let the wingman interrupt to defend itself, then keep the remaining targets valid. | The wingman resumes STRIKE and visibly works the remaining targets instead of ending the mission after the interruption. |
+| [ ] A2A exhaustion, reload/salvo wait, and CAP | Assign A2A and observe an ordinary salvo/reload wait before weapons are exhausted; then exhaust its A2A weapons. Separately assign/keep CAP at a point, including after no A2A ammunition remains. | With the target still valid, A2A remains assigned through salvo/reload waits and ends when compatible ammunition is exhausted. CAP remains assigned and may patrol even without A2A ammunition. |
+| [ ] FOLLOW fallback and leader recovery | Command FOLLOW, make the leader temporarily unavailable, then restore the leader. | The wingman falls back safely while the leader is unavailable and visibly returns to following after recovery. |
+| [ ] RTB entry, cancellation, and player takeover | Send a selected wingman RTB; use TAKE CONTROL while it is still RTB. Separately cancel RTB while cancellation is available. | RTB visibly starts; TAKE CONTROL during RTB gives the player the selected aircraft; cancellation returns the aircraft to controllable activity. |
+| [ ] Recovery-pending takeover, cancel/detach, and player ownership | Start recovery, use TAKE CONTROL while recovery is pending, then cancel or detach recovery. | The aircraft is not destroyed; player ownership remains with the player after the cancel/detach. |
+| [ ] SP scene-exit cleanup | In single-player, leave/end a scene or session with active wingman records and inspect the retained logs. | Cleanup completes without stale active wingman-session records or cleanup errors; normal despawn is permissible. |
+| [ ] Authority-loss diagnostic — outside SP acceptance | In a diagnostic authority-loss/session-loss scenario, inspect both retained logs and session state. | No mod AI switch takes over after authority loss, and no lingering reservations remain. Dedicated multiplayer is still unaccepted; this is diagnostic evidence, not multiplayer acceptance. |
+
+It is appropriate to ask for reopening or send a ready-for-review message only after every applicable pending runtime check above is accepted, a **new version** is published, and its manifest download URL and SHA-256 match the new published DLL. Explicit user approval is also required. Do not infer a runtime pass, release, version selection, publication, deployment authorization, or PR reopening from this checklist.
 
 CLX completion and new native recruitment are not gates for the original feature release. This checklist makes no claim that the required runtime tests or release validation have been completed, and it does not select a new version.
 
