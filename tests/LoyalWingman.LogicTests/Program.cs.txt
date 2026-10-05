@@ -29,6 +29,23 @@ internal static class Program
         Equal(false, CombatCommandLogic.MatchesTarget("target-a", ""), "a2a empty target ID is safe");
         Equal(false, CombatCommandLogic.MatchesTarget("target-y", "target-x"),
               "a2a invalidating X retains conceptual Record Y");
+        Equal(false, CombatCommandLogic.IsStateSwitchInstalled(true, true),
+              "switch exception after assignment is not acknowledged");
+        Equal(false, CombatCommandLogic.IsStateSwitchInstalled(true, false),
+              "switch exception before assignment is not acknowledged");
+        Equal(true, CombatCommandLogic.IsStateSwitchInstalled(false, true),
+              "normal matched switch is acknowledged");
+        Equal(false, CombatCommandLogic.IsStateSwitchInstalled(false, false),
+              "normal mismatched switch is rejected");
+        Equal(true, CombatCommandLogic.ShouldRetainFailedSwitch(true, false, false),
+              "post-assignment failure tracks requested state for recovery");
+        Equal(true, CombatCommandLogic.ShouldRetainFailedSwitch(false, true, true),
+              "pre-assignment failure retains exact prior owned state");
+        Equal(false, CombatCommandLogic.ShouldRetainFailedSwitch(false, false, true),
+              "failed switch never claims an unrelated current state");
+        Equal(false, CombatCommandLogic.ShouldRetainFailedSwitch(false, true, false),
+              "failed switch does not retain prior state after displacement");
+        TestSwitchAndRecoveryLifecycle();
         Equal(false, CombatCommandLogic.IsSingleTargetProjection(System.Array.Empty<string?>(), out string? projectedEmpty),
               "a2a projection rejects empty");
         Equal<string?>(null, projectedEmpty, "a2a empty projection has no target");
@@ -761,6 +778,74 @@ internal static class Program
         Equal(true, CombatCommandLogic.ResolveDesired(true, WingmanMission.AirToAir, true, DroneModeOverride.Auto, true) == WingmanDesired.AirToAir,
               "explicit a2a invalidation behavior remains distinct");
     }
+    private static void TestSwitchAndRecoveryLifecycle()
+    {
+        object prior = new object(), requested = new object(), unrelated = new object();
+        object current = prior;
+        bool installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => current,
+            next => { }, out object currentAfter, out object requestedState, out bool attempted, out bool threw);
+        Equal(true, installed, "same-instance native no-op acknowledges existing state");
+        Equal(true, attempted, "switch callback invoked for same-instance no-op");
+
+        object equalButDistinct = new EqualReference();
+        object equalRequest = new EqualReference();
+        installed = CombatCommandLogic.TrySwitchState<object>(() => equalButDistinct, () => equalRequest,
+            next => { }, out currentAfter, out requestedState, out attempted, out threw);
+        Equal(false, installed, "distinct value-equal references are not pointer acknowledgment");
+
+        installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => null!,
+            next => { }, out currentAfter, out requestedState, out attempted, out threw);
+        Equal(false, installed, "null requested state is rejected");
+        Equal(false, attempted, "null request never attempts native switch");
+
+        installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => requested,
+            next => { throw new InvalidOperationException(); }, out currentAfter, out requestedState, out attempted, out threw);
+        Equal(false, installed, "before-assignment failure is unacknowledged");
+        Equal(true, attempted, "before-assignment switch was attempted");
+        Equal(true, CombatCommandLogic.ShouldRetainFailedSwitch(false, true, ReferenceEquals(currentAfter, prior)),
+              "attempted leave failure retains exact prior owner");
+        Equal(false, CombatCommandLogic.ShouldRetainFailedSwitch(false, false, false),
+              "constructor/guard failures do not create pending responsibility");
+
+        installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => requested, next =>
+        {
+            current = next;
+            throw new InvalidOperationException();
+        }, out currentAfter, out requestedState, out attempted, out threw);
+        Equal(false, installed, "after-assignment throw is failure");
+        Equal(true, ReferenceEquals(currentAfter, requestedState), "after-assignment exact request is attributable");
+        current = prior;
+        installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => requested, next =>
+        {
+            current = unrelated;
+            throw new InvalidOperationException();
+        }, out currentAfter, out requestedState, out attempted, out threw);
+        Equal(false, installed, "nested third-state transition is not adopted");
+        Equal(false, CombatCommandLogic.ShouldRetainFailedSwitch(false, true, ReferenceEquals(currentAfter, prior)),
+              "nested third state displaces prior responsibility");
+
+        int retries = 0;
+        object? native = null;
+        for (int i = 0; i < 2; i++)
+        {
+            installed = CombatCommandLogic.TrySwitchState<object>(() => current, () => new object(), next =>
+            {
+                retries++;
+                native = next;
+                current = next;
+                if (retries == 1) throw new InvalidOperationException();
+            }, out currentAfter, out requestedState, out attempted, out threw);
+        }
+        Equal(true, installed, "fresh native object retry succeeds");
+        Equal(2, retries, "native state reconstructed on retry");
+        Equal(true, ReferenceEquals(native, currentAfter), "retry installed exact fresh object");
+    }
+    private sealed class EqualReference
+    {
+        public override bool Equals(object? obj) => obj is EqualReference;
+        public override int GetHashCode() => 1;
+    }
+
     private static void Equal<T>(T expected, T actual, string name)
     {
         tests++;

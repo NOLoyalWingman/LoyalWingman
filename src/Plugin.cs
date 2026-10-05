@@ -219,11 +219,9 @@ public sealed class Plugin : BaseUnityPlugin
                     s.Cruise.Tick();
                 if (enable.Value)
                     s.Manager.Tick();
+                else
+                    s.Manager.StopAll("disabled", followEnabledLastFrame);
             }
-            if (followEnabledLastFrame && !enable.Value)
-                foreach (CarrierSession s in snapshot)
-                    if (IsActiveSession(s))
-                        s.Manager.StopAll("disabled");
             followEnabledLastFrame = enable.Value;
         }
         TickRecoveryGuidance();

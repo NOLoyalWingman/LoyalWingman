@@ -679,9 +679,18 @@ internal sealed class MapCommandPanel
     }
     private void SetMode(DroneModeOverride mode)
     {
-        List<Aircraft> drones = SelectedCommandDrones(), failures = new List<Aircraft>(); List<string> reasons = new List<string>(); int success = 0;
-        foreach (Aircraft drone in drones) if (plugin.MapSetMode(drone, mode, out string reason)) success++; else { failures.Add(drone); reasons.Add(reason); }
-        ShowBatchFeedback(mode.ToString().ToUpperInvariant(), success, drones.Count, failures, reasons, success > 0 ? hudGreen : Amber);
+        List<Aircraft> drones = SelectedCommandDrones(), failures = new List<Aircraft>(); List<string> reasons = new List<string>();
+        int installed = 0, sent = 0;
+        foreach (Aircraft drone in drones)
+            if (plugin.MapSetMode(drone, mode, out string reason))
+            {
+                if (reason == "sent") sent++;
+                else installed++;
+            }
+            else { failures.Add(drone); reasons.Add(reason); }
+        string action = mode.ToString().ToUpperInvariant() + (sent > 0 ? " REQUEST SENT" : "");
+        ShowBatchFeedback(action, installed + sent, drones.Count, failures, reasons,
+                          sent > 0 ? Amber : installed > 0 ? hudGreen : Amber);
     }
     private void CruiseToPoint()
     {

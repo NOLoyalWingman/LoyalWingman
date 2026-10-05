@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using NuclearOption.Networking;
 using UnityEngine;
 
 namespace LoyalWingman;
@@ -122,7 +123,7 @@ internal sealed class WingmanAiManager
             reason = "not_registered";
             return false;
         }
-        if (r.returningToBase || context.HasPlayerAssociation(drone) ||
+        if (r.nativeLandingCleanupPending || r.recoveryPending || r.returningToBase || context.HasPlayerAssociation(drone) ||
             !TryKinematics(drone, r.slotOrdinal, false, out _) || !TryKinematics(carrier, -1, true, out _) ||
             drone.pilots == null || drone.pilots.Length == 0 || drone.pilots[0] == null ||
             drone.pilots[0].pilotType != Pilot.PilotType.Plane || drone.autopilot is not AutopilotPlane ||
@@ -156,7 +157,7 @@ internal sealed class WingmanAiManager
             new FixedWingDroneLaunchClearanceState(this, drone, carrier, carrierId, egressDirection);
         if (SwitchTo(drone, r, state, "launch_clearance"))
             return true;
-        ClearLaunchClearance(r);
+        // Retain the clearance intent: a partial custom entry must be recoverable/retried, not orphaned.
         reason = "state_install";
         return false;
     }
@@ -246,9 +247,13 @@ internal sealed class WingmanAiManager
         if (!CommandRuntime(drone, out reason))
             return false;
         Record r = records[drone];
+        DroneModeOverride previous = r.modeOverride;
         r.modeOverride = value;
-        ApplyDesired(drone, r, "set_mode");
-        return true;
+        if (ApplyDesired(drone, r, "set_mode"))
+            return true;
+        r.modeOverride = previous;
+        reason = "state_install_failed";
+        return false;
     }
     internal bool TryCruiseToPoint(Aircraft drone, GlobalPosition point, out string reason)
     {
@@ -496,7 +501,7 @@ internal sealed class WingmanAiManager
         r.casTarget = best; r.casTargetId = bestPid; target = best; return true;
     }
     internal bool CasOwns(Aircraft drone, FixedWingDroneCasState state, int centerRevision) =>
-        records.TryGetValue(drone, out Record r) && !r.returningToBase && r.state == state &&
+        records.TryGetValue(drone, out Record r) && !r.recoveryPending && !r.returningToBase && r.state == state &&
         r.mission == WingmanMission.Cas && r.hasCasCenter && r.casCenterRevision == centerRevision &&
         context.CombatEnabled && CombatSupport.Runtime(drone, state) && !context.HasPlayerAssociation(drone);
     internal bool InvalidateCasTarget(Aircraft drone, Unit target, string reason)
@@ -597,7 +602,7 @@ internal sealed class WingmanAiManager
         return false;
     }
     internal bool StrikeOwns(Aircraft drone, FixedWingDroneStrikeState state, int revision) =>
-        records.TryGetValue(drone, out Record r) && !r.returningToBase && r.state == state &&
+        records.TryGetValue(drone, out Record r) && !r.recoveryPending && !r.returningToBase && r.state == state &&
         r.mission == WingmanMission.Strike && r.strikeTargetIds.Length > 0 && r.strikeRevision == revision &&
         context.CombatEnabled && CombatSupport.Runtime(drone, state) && !context.HasPlayerAssociation(drone);
     internal bool InvalidateStrikeTarget(Aircraft drone, Unit target, string reason)
@@ -632,6 +637,16 @@ internal sealed class WingmanAiManager
             reason = "not_registered";
             return false;
         }
+        if (r.nativeLandingCleanupPending)
+        {
+            reason = "rtb_cleanup_pending";
+            return false;
+        }
+        if (r.recoveryPending)
+        {
+            reason = "state_install_failed";
+            return false;
+        }
         if (r.returningToBase)
             return TryCancelReturnToBase(drone, out reason);
         ClearCapRecord(r); ClearAirToAirRecord(r);
@@ -649,6 +664,16 @@ internal sealed class WingmanAiManager
         if (!records.TryGetValue(drone, out Record r))
         {
             reason = "not_registered";
+            return false;
+        }
+        if (r.nativeLandingCleanupPending)
+        {
+            reason = "rtb_cleanup_pending";
+            return false;
+        }
+        if (r.recoveryPending)
+        {
+            reason = "state_install_failed";
             return false;
         }
         if (r.returningToBase)
@@ -674,6 +699,16 @@ internal sealed class WingmanAiManager
         if (!records.TryGetValue(drone, out Record r))
         {
             reason = "not_registered";
+            return false;
+        }
+        if (r.nativeLandingCleanupPending)
+        {
+            reason = "rtb_cleanup_pending";
+            return false;
+        }
+        if (r.recoveryPending)
+        {
+            reason = "state_install_failed";
             return false;
         }
         if (r.returningToBase)
@@ -707,27 +742,24 @@ internal sealed class WingmanAiManager
             reason = "native_landing_unavailable";
             return false;
         }
-        Exception? handoffException = null;
-        try
+        PilotBaseState? beforeLanding = pilot.currentState;
+        r.nativeLandingCleanupPending = true; // The admitted handoff can acquire usage before transition failure.
+        bool handoffInstalled = CombatCommandLogic.TrySwitchState<PilotBaseState>(() => pilot.currentState!, () => landing,
+            requested => pilot.SwitchState(requested), out PilotBaseState currentAfter,
+            out PilotBaseState requestedLanding, out bool attempted, out bool handoffThrew);
+        if (!handoffInstalled)
         {
-            pilot.SwitchState(landing);
-        }
-        catch (Exception e)
-        {
-            handoffException = e;
-            log("state=rtb_handoff_exception pid=" + Pid(drone) + " native=AIPilotLandingState exception=" +
-                e.GetType().Name);
-        }
-        if (pilot.currentState != landing)
-        {
-            reason = handoffException == null ? "rtb_handoff_failed" : "rtb_handoff_exception";
-            if (handoffException == null)
-                log("state=rtb_handoff_failed pid=" + Pid(drone) + " native=AIPilotLandingState");
+            if (attempted && CombatCommandLogic.ShouldRetainFailedSwitch(ReferenceEquals(currentAfter, requestedLanding),
+                    r.state != null, beforeLanding != null && ReferenceEquals(beforeLanding, r.state) &&
+                    ReferenceEquals(currentAfter, beforeLanding)))
+            {
+                r.state = currentAfter;
+                r.recoveryPending = true;
+                if (currentAfter == requestedLanding) r.returningToBase = true;
+            }
+            reason = handoffThrew ? "rtb_handoff_exception" : "rtb_handoff_failed";
             return false;
         }
-        if (handoffException != null)
-            log("state=rtb_handoff_exception_installed pid=" + Pid(drone) + " native=AIPilotLandingState exception=" +
-                handoffException.GetType().Name);
         ClearLaunchClearance(r);
         ClearCapRecord(r); ClearAirToAirRecord(r);
         if (r.mission == WingmanMission.AntiShip) ClearAntiShipRecord(r);
@@ -735,6 +767,7 @@ internal sealed class WingmanAiManager
         if (r.mission == WingmanMission.Cas) ClearCasRecord(r);
         if (r.mission == WingmanMission.Strike) ClearStrikeRecord(r);
         r.returningToBase = true;
+        r.nativeLandingCleanupPending = false; // Successful native landing owns reservation lifetime.
         r.mission = WingmanMission.None;
         r.antiShipRadarThreat = null; r.state = null;
         separation.Remove(drone);
@@ -785,10 +818,6 @@ internal sealed class WingmanAiManager
             reason = "not_registered";
             return false;
         }
-        if (!RtbCancellationLogic.CanCancel(r.returningToBase, drone.disabled, drone.HasEjected(),
-                                            drone.unitState == Unit.UnitState.Abandoned,
-                                            drone.unitState == Unit.UnitState.Returned, drone.radarAlt, out reason))
-            return false;
         Pilot pilot;
         AIPilotLandingState landing;
         try
@@ -801,22 +830,51 @@ internal sealed class WingmanAiManager
             reason = "rtb_committed";
             return false;
         }
+        if (r.nativeLandingCleanupPending && !r.recoveryPending)
+        {
+            if (!CompleteNativeLandingCleanup(drone, r, "rtb_cancel_retry")) { reason = "rtb_cleanup_failed"; return false; }
+            return true;
+        }
+        if (!RtbCancellationLogic.CanCancel(r.returningToBase, drone.disabled, drone.HasEjected(),
+                                            drone.unitState == Unit.UnitState.Abandoned,
+                                            drone.unitState == Unit.UnitState.Returned, drone.radarAlt, out reason))
+            return false;
+        if (r.recoveryPending)
+        {
+            if (!CanRecoverPending(drone, r)) { reason = "rtb_committed"; return false; }
+            if (!RecoverPendingSwitch(drone, r, "rtb_cancel")) { reason = "rtb_cancel_handoff_failed"; return false; }
+            return true;
+        }
         if (!CanLeaveNativeLandingForCancel(drone, landing))
         {
             reason = "rtb_committed";
             return false;
         }
+        r.nativeLandingCleanupPending = true;
         r.returningToBase = false;
-        ApplyDesired(drone, r, "rtb_cancel", allowNativeLanding: true);
-        if (r.state == null || pilot.currentState != r.state || pilot.currentState == landing)
+        r.state = landing; // Explicit cancel attributes the attempted departure to this exact native pointer.
+        if (!ApplyDesired(drone, r, "rtb_cancel", allowNativeLanding: true) || r.state == null ||
+            pilot.currentState != r.state || pilot.currentState == landing)
         {
+            if (ReferenceEquals(pilot.currentState, landing) && !r.recoveryPending)
+            {
+                r.state = null; // No attempted departure; native landing remains healthy owner.
+                r.nativeLandingCleanupPending = false;
+                reason = "rtb_cancel_not_installed";
+            }
+            else
+                reason = "rtb_cancel_handoff_failed";
             r.returningToBase = true;
+            return false;
+        }
+        if (!CompleteNativeLandingCleanup(drone, r, "rtb_cancel"))
+        {
+            r.returningToBase = true; // Retain RTB admission guard while cleanup-only duty retries.
             return false;
         }
         ClearCasRecord(r); ClearStrikeRecord(r); r.mission = WingmanMission.None;
         r.lastRtbPilotState = null;
         log("state=rtb_cancel_accepted pid=" + Pid(drone));
-        ReleaseNativeLandingUsage(drone, landing, "rtb_cancel");
         return true;
     }
     // Cancellation is the sole intentional takeover of a native landing state; generic reconciliation never does this.
@@ -834,32 +892,52 @@ internal sealed class WingmanAiManager
     internal void Unregister(Aircraft drone, string reason)
     {
         records.TryGetValue(drone, out Record? r);
-        bool liveCustom = r != null && InstalledStateOwns(drone, r);
-        if (liveCustom)
+        bool detachOnly = context.HasPlayerAssociation(drone) || !drone.IsServer || !drone.LocalSim ||
+                          drone.disabled || drone.HasEjected() || drone.unitState == Unit.UnitState.Abandoned ||
+                          drone.unitState == Unit.UnitState.Returned;
+        if (r != null && r.recoveryPending)
         {
-            bool detachOnly = context.HasPlayerAssociation(drone) || !drone.IsServer || !drone.LocalSim ||
-                              drone.disabled || drone.HasEjected() || drone.unitState == Unit.UnitState.Abandoned ||
-                              drone.unitState == Unit.UnitState.Returned;
+            if (!InstalledStateOwns(drone, r))
+            {
+                r.recoveryPending = false;
+                r.state = null; // Stale responsibility; the external current state is untouched.
+            }
+            else if (detachOnly)
+            {
+                r.state = null;
+                r.recoveryPending = false;
+            }
+            else if (!RecoverPendingSwitch(drone, r, "unregister_" + reason))
+            {
+                log("state=unregister_retained pid=" + Pid(drone) + " reason=native_handoff_failed");
+                return;
+            }
+        }
+        if (r != null && r.nativeLandingCleanupPending && !r.recoveryPending &&
+            !CompleteNativeLandingCleanup(drone, r, "unregister"))
+        {
+            log("state=unregister_retained pid=" + Pid(drone) + " reason=rtb_cleanup_pending");
+            return;
+        }
+        if (r != null && !r.returningToBase && InstalledStateOwns(drone, r))
+        {
             if (detachOnly)
             {
-                // We no longer own the aircraft's lifecycle: detach bookkeeping without changing its pilot state.
-                CancelOnly(r!.state!);
-                r.state = null;
+                r.state = null; // Detach exact switch responsibility; cleanup duty remains independently latched.
+            }
+            else if (!context.CanFallback(drone) || !SwitchFreshNativeIfSafe(drone, "unregister_" + reason))
+            {
+                log("state=unregister_retained pid=" + Pid(drone) + " reason=native_handoff_failed");
+                return;
             }
             else
             {
-                bool handedOff = false;
-                try { handedOff = context.CanFallback(drone) && SwitchFreshNativeIfSafe(drone, "unregister_" + reason); }
-                catch (Exception e) { log("state=unregister_native_fallback_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name); }
-                if (!handedOff)
-                {
-                    // Keep every record field, including active clearance, until the live custom state can hand off.
-                    log("state=unregister_retained pid=" + Pid(drone) + " reason=native_handoff_failed");
-                    return;
-                }
-                r!.state = null;
+                CancelOnly(r.state!);
+                r.state = null;
+                Disarm(drone);
             }
         }
+        // Healthy RTB remains native-owned. Unregister does not force a state transition or discard its reservation cleanup.
         if (r != null)
             ClearLaunchClearance(r);
         try { UnbindMissionMissileHandlers(drone, r); }
@@ -874,7 +952,7 @@ internal sealed class WingmanAiManager
     {
         if (!records.TryGetValue(drone, out Record r))
             return true;
-        if (r.returningToBase)
+        if (r.recoveryPending || r.returningToBase)
             return false;
         if (r.state == null)
         {
@@ -890,7 +968,9 @@ internal sealed class WingmanAiManager
             if (p.currentState != r.state)
                 return false;
             if (!SwitchFreshNativeIfSafe(drone, reason))
+            {
                 return false;
+            }
             Disarm(drone);
             ClearLaunchClearance(r);
             r.antiShipRadarThreat = null; r.state = null;
@@ -931,23 +1011,29 @@ internal sealed class WingmanAiManager
         nextReconcile = Time.realtimeSinceStartup + .75f;
         Reconcile("interval");
     }
-    internal void StopAll(string reason)
+    internal void StopAll(string reason, bool immediate = false)
     {
+        if (!immediate && Time.realtimeSinceStartup < nextReconcile) return;
+        nextReconcile = Time.realtimeSinceStartup + .75f;
         foreach (Aircraft d in new List<Aircraft>(registered))
         {
             if (!records.TryGetValue(d, out Record r))
                 continue;
             ClearLaunchClearance(r);
+            ClearCapRecord(r); ClearAirToAirRecord(r); ClearAntiShipRecord(r); ClearSeadRecord(r);
+            ClearCasRecord(r); ClearStrikeRecord(r); r.mission = WingmanMission.None;
+            if (r.recoveryPending)
+            {
+                if (!InstalledStateOwns(d, r)) { r.state = null; r.recoveryPending = false; }
+                else RecoverPendingSwitch(d, r, reason);
+                continue;
+            }
+            if (r.nativeLandingCleanupPending && !CompleteNativeLandingCleanup(d, r, "stopall"))
+                continue;
             if (r.returningToBase)
-                continue;
-            ClearCapRecord(r); ClearAirToAirRecord(r); ClearAntiShipRecord(r); ClearSeadRecord(r); ClearCasRecord(r); ClearStrikeRecord(r); r.mission = WingmanMission.None;
-            if (r.state == null)
-                continue;
-            PilotBaseState old = r.state;
-            r.antiShipRadarThreat = null; r.state = null;
-            CancelOnly(old);
-            Disarm(d);
-            SwitchFreshNativeIfSafe(d, reason);
+                continue; // Healthy native landing/taxi lifecycle remains native-owned.
+            if (r.state != null)
+                Fallback(d, reason);
         }
     }
     internal void Reconcile(string reason)
@@ -968,6 +1054,22 @@ internal sealed class WingmanAiManager
                 }
                 if (!records.TryGetValue(d, out Record r))
                     continue;
+                if (r.recoveryPending)
+                {
+                    if (!InstalledStateOwns(d, r))
+                    {
+                        r.recoveryPending = false;
+                        r.state = null; // External transition owns the pilot now; preserve RTB cleanup latch.
+                        continue;
+                    }
+                    if (RecoverPendingSwitch(d, r, reason) && !r.returningToBase && context.CombatEnabled)
+                        ApplyDesired(d, r, reason);
+                    continue;
+                }
+                if (r.nativeLandingCleanupPending)
+                {
+                    if (!CompleteNativeLandingCleanup(d, r, "rtb_reconcile")) continue;
+                }
                 if (r.returningToBase)
                 {
                     ObserveRtbPilotState(d, r);
@@ -1023,13 +1125,22 @@ internal sealed class WingmanAiManager
     }
     internal void Fallback(Aircraft d, string reason)
     {
-        if (CancelState(d))
+        if (!records.TryGetValue(d, out Record r) || r.recoveryPending || r.returningToBase || r.state == null || !InstalledStateOwns(d, r))
+            return;
+        // Do not clear r.state before the native handoff: if it fails the live custom state remains owned
+        // and can be retried instead of becoming permanently ineligible for installation.
+        if (!SwitchFreshNativeIfSafe(d, reason))
         {
-            separation.Remove(d);
-            if (SwitchFreshNativeIfSafe(d, reason))
-                return;
-            Log("follow_stopped", d, reason);
+            // An attempted failure retains exact state responsibility; preflight rejection leaves ownership unchanged.
+            Log("follow_fallback_retained", d, reason);
+            return;
         }
+        CancelOnly(r.state);
+        r.antiShipRadarThreat = null;
+        r.state = null;
+        ClearLaunchClearance(r);
+        Disarm(d);
+        separation.Remove(d);
     }
     // A formation controller can temporarily loiter without changing the group's AUTO mode or its override.
     // In particular, an explicit FOLLOW remains FOLLOW and resumes when the leader returns.
@@ -1131,43 +1242,32 @@ internal sealed class WingmanAiManager
         jumpLatched = false;
         nextSample = nextReconcile = nextCombatScan = 0f;
     }
-    private bool CancelState(Aircraft d)
-    {
-        if (!records.TryGetValue(d, out Record r) || r.returningToBase || r.state == null)
-            return false;
-        PilotBaseState state = r.state;
-        try
-        {
-            if (d == null || d.pilots == null || d.pilots.Length == 0 || d.pilots[0] == null ||
-                d.pilots[0].currentState != state)
-                return false;
-            r.antiShipRadarThreat = null; r.state = null;
-            ClearLaunchClearance(r);
-            CancelOnly(state);
-            Disarm(d);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
     private bool SwitchFreshNativeIfSafe(Aircraft d, string reason)
     {
-        if (d == null || d.pilots == null || d.pilots.Length == 0 || d.pilots[0] == null)
+        if (d == null || !d.IsServer || !d.LocalSim || context.HasPlayerAssociation(d) || d.disabled ||
+            d.HasEjected() || d.unitState == Unit.UnitState.Abandoned || d.unitState == Unit.UnitState.Returned ||
+            d.pilots == null || d.pilots.Length == 0 || d.pilots[0] == null ||
+            !records.TryGetValue(d, out Record tracked) || tracked.state == null ||
+            d.pilots[0].currentState != tracked.state)
             return false;
         Pilot p = d.pilots[0];
-        AIPilotCombatModes fresh = new AIPilotCombatModes(d);
-        try
+        bool success = CombatCommandLogic.TrySwitchState<PilotBaseState>(() => p.currentState!,
+            () => (PilotBaseState)new AIPilotCombatModes(d), requested =>
+            {
+                p.AICombatState = (AIPilotCombatModes)requested;
+                p.SwitchState(requested);
+            }, out PilotBaseState currentAfter, out PilotBaseState fresh, out bool attempted, out _);
+        if (!success)
         {
-            p.AICombatState = fresh;
-            p.SwitchState(fresh);
-        }
-        catch
-        {
-        }
-        if (p.currentState != fresh)
+            if (attempted && records.TryGetValue(d, out Record record) &&
+                CombatCommandLogic.ShouldRetainFailedSwitch(ReferenceEquals(currentAfter, fresh), record.state != null,
+                    ReferenceEquals(currentAfter, record.state)))
+            {
+                if (ReferenceEquals(currentAfter, fresh)) record.state = currentAfter;
+                record.recoveryPending = true;
+            }
             return false;
+        }
         Log("wingman_native_fallback", d, reason);
         reporter.NativeFallback(d);
         return true;
@@ -1444,18 +1544,24 @@ internal sealed class WingmanAiManager
         foreach (KeyValuePair<Aircraft, Record> pair in new List<KeyValuePair<Aircraft, Record>>(records))
             ApplyDesired(pair.Key, pair.Value, "mode_change");
     }
-    private void ApplyDesired(Aircraft d, Record r, string reason, bool allowNativeLanding = false)
+    // True means the desired state is installed already, was installed now, or is deliberately deferred.
+    // False is an admission/install failure and is suitable for command acknowledgement.
+    private bool ApplyDesired(Aircraft d, Record r, string reason, bool allowNativeLanding = false)
     {
-        if (r.returningToBase || d == null)
-            return;
+        if (r.nativeLandingCleanupPending && !allowNativeLanding)
+            return false; // Cleanup duty blocks new entry except the explicit RTB cancellation transition.
+        if (r.returningToBase)
+            return true; // Healthy native RTB intentionally defers mode changes.
+        if (d == null)
+            return false;
         if (context.HasPlayerAssociation(d))
-        {
-            ClearLaunchClearance(r);
-            return;
-        }
+            return false;
+        if (r.recoveryPending)
+            return false; // Reconciliation owns recovery; do not execute a partial state.
         if (r.state != null && !InstalledStateOwns(d, r))
         {
-            // Detach our stale state.  Admission below decides whether the current native state is safe to reclaim.
+            // An externally replaced state is no longer ours.  A SwitchTo failure which left its requested
+            // state current is retained instead, so this path does not strand that custom state.
             PilotBaseState displaced = r.state;
             r.state = null;
             ClearLaunchClearance(r);
@@ -1465,33 +1571,31 @@ internal sealed class WingmanAiManager
         if (r.state == null && !context.EligibleForInstall(d, out _) &&
             !(allowNativeLanding && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
               d.pilots[0].currentState is AIPilotLandingState))
-            return;
+            return false;
         if (r.launchClearanceActive)
         {
             if (r.state is FixedWingDroneLaunchClearanceState clearance && d.pilots != null &&
                 d.pilots.Length > 0 && d.pilots[0] != null && d.pilots[0].currentState == clearance)
-                return;
-            if (r.launchCarrier != null)
-                SwitchTo(d, r, new FixedWingDroneLaunchClearanceState(this, d, r.launchCarrier,
-                         r.launchCarrierId, r.egressDirection), reason);
-            return;
+                return true; // Active clearance intentionally defers mode changes.
+            return r.launchCarrier != null && SwitchTo(d, r, new FixedWingDroneLaunchClearanceState(this, d,
+                r.launchCarrier, r.launchCarrierId, r.egressDirection), reason);
         }
         if (context.CombatEnabled && HasEffectiveDefense(d, r, out _))
-            return;
+            return true; // Active defense intentionally defers mode changes.
         if (r.mission == WingmanMission.Cap)
         {
             if (r.capTarget != null && !CapTargetValid(d, r, r.capTarget))
+            {
                 ClearCapTarget(d, r, "target_invalid");
+            }
             if (CapMissionLogic.ResolveDesired(context.CombatEnabled, r.capTarget != null) == WingmanDesired.AirToAir)
             {
                 Aircraft capTarget = r.capTarget!;
-                if (r.state is FixedWingDroneAirToAirAttackState current && current.Target == capTarget) return;
-                SwitchTo(d, r, new FixedWingDroneAirToAirAttackState(this, d, capTarget), reason);
-                return;
+                if (r.state is FixedWingDroneAirToAirAttackState current && current.Target == capTarget) return true;
+                return SwitchTo(d, r, new FixedWingDroneAirToAirAttackState(this, d, capTarget), reason);
             }
-            if (r.state is FixedWingDroneLoiterState) return;
-            SwitchTo(d, r, new FixedWingDroneLoiterState(this, d, r.loiterPhase), reason);
-            return;
+            if (r.state is FixedWingDroneLoiterState) return true;
+            return SwitchTo(d, r, new FixedWingDroneLoiterState(this, d, r.loiterPhase), reason);
         }
         bool targetReady = r.mission == WingmanMission.None || r.mission == WingmanMission.AirToAir
                                ? r.mission == WingmanMission.None || r.airToAirTarget != null && CombatSupport.ValidHostileTrackedAircraft(d, r.airToAirTarget)
@@ -1502,12 +1606,13 @@ internal sealed class WingmanAiManager
                                        : r.mission == WingmanMission.Cas ? r.hasCasCenter : r.strikeTargetIds.Length > 0;
         if (context.CombatEnabled && r.mission != WingmanMission.None && !targetReady)
         {
-            if (r.mission == WingmanMission.AntiShip) ClearAntiShip(d, "target_invalid");
-            else if (r.mission == WingmanMission.Sead) ClearSead(d, "target_invalid");
-            else if (r.mission == WingmanMission.Cas) ClearCas(d, "center_invalid");
-            else if (r.mission == WingmanMission.Strike) ClearStrike(d, "target_set_invalid");
-            else ClearAirToAir(d, "target_invalid");
-            return;
+            if (r.mission == WingmanMission.AntiShip) ClearAntiShipRecord(r);
+            else if (r.mission == WingmanMission.Sead) ClearSeadRecord(r);
+            else if (r.mission == WingmanMission.Cas) ClearCasRecord(r);
+            else if (r.mission == WingmanMission.Strike) ClearStrikeRecord(r);
+            else ClearAirToAirRecord(r);
+            r.mission = WingmanMission.None;
+            return ApplyDesired(d, r, reason, allowNativeLanding);
         }
         WingmanDesired desired = CombatCommandLogic.ResolveDesired(context.CombatEnabled, r.mission,
                                                                     targetReady,
@@ -1516,49 +1621,66 @@ internal sealed class WingmanAiManager
         if (desired == WingmanDesired.AirToAir)
         {
             Aircraft target = r.airToAirTarget!;
-            if (r.state is FixedWingDroneAirToAirAttackState a2a && a2a.Target == target)
-                return;
-            SwitchTo(d, r, new FixedWingDroneAirToAirAttackState(this, d, target), reason);
-            return;
+            if (r.state is FixedWingDroneAirToAirAttackState a2a && a2a.Target == target) return true;
+            return SwitchTo(d, r, new FixedWingDroneAirToAirAttackState(this, d, target), reason);
         }
         if (desired == WingmanDesired.Sead)
         {
             Unit target = r.seadTarget!;
-            if (r.state is FixedWingDroneSeadState sead && sead.Target == target)
-                return;
-            SwitchTo(d, r, new FixedWingDroneSeadState(this, d, target), reason);
-            return;
+            if (r.state is FixedWingDroneSeadState sead && sead.Target == target) return true;
+            return SwitchTo(d, r, new FixedWingDroneSeadState(this, d, target), reason);
         }
         if (desired == WingmanDesired.AntiShip)
         {
             Ship target = r.antiShipTarget!;
-            if (r.state is FixedWingDroneAntiShipAttackState antiShip && antiShip.Target == target)
-                return;
-            SwitchTo(d, r, new FixedWingDroneAntiShipAttackState(this, d, target), reason);
-            return;
+            if (r.state is FixedWingDroneAntiShipAttackState antiShip && antiShip.Target == target) return true;
+            return SwitchTo(d, r, new FixedWingDroneAntiShipAttackState(this, d, target), reason);
         }
         if (desired == WingmanDesired.Cas)
         {
-            if (r.state is FixedWingDroneCasState cas && CasOwns(d, cas, r.casCenterRevision)) return;
-            SwitchTo(d, r, new FixedWingDroneCasState(this, d, r.casCenterRevision), reason);
-            return;
+            if (r.state is FixedWingDroneCasState cas && CasOwns(d, cas, r.casCenterRevision)) return true;
+            return SwitchTo(d, r, new FixedWingDroneCasState(this, d, r.casCenterRevision), reason);
         }
         if (desired == WingmanDesired.Strike)
         {
-            if (r.state is FixedWingDroneStrikeState strike && StrikeOwns(d, strike, r.strikeRevision)) return;
-            SwitchTo(d, r, new FixedWingDroneStrikeState(this, d, r.strikeRevision), reason);
-            return;
+            if (r.state is FixedWingDroneStrikeState strike && StrikeOwns(d, strike, r.strikeRevision)) return true;
+            return SwitchTo(d, r, new FixedWingDroneStrikeState(this, d, r.strikeRevision), reason);
         }
         if (desired == WingmanDesired.Follow)
         {
-            if (r.state is FixedWingDroneFollowState)
-                return;
-            SwitchTo(d, r, new FixedWingDroneFollowState(this, d, r.slot), reason);
-            return;
+            if (r.state is FixedWingDroneFollowState) return true;
+            return SwitchTo(d, r, new FixedWingDroneFollowState(this, d, r.slot), reason);
         }
-        if (r.state is FixedWingDroneLoiterState)
-            return;
-        SwitchTo(d, r, new FixedWingDroneLoiterState(this, d, r.loiterPhase), reason);
+        if (r.state is FixedWingDroneLoiterState) return true;
+        return SwitchTo(d, r, new FixedWingDroneLoiterState(this, d, r.loiterPhase), reason);
+    }
+    private bool CanRecoverPending(Aircraft drone, Record r) =>
+        drone != null && drone.pilots != null && drone.pilots.Length > 0 && drone.pilots[0] != null &&
+        CombatCommandLogic.CanRecoverPending(r.state != null, drone.pilots[0].currentState == r.state,
+            drone.IsServer && drone.LocalSim && context.CanFallback(drone), context.HasPlayerAssociation(drone),
+            drone.disabled || drone.HasEjected() || drone.unitState == Unit.UnitState.Abandoned ||
+            drone.unitState == Unit.UnitState.Returned);
+    private bool RecoverPendingSwitch(Aircraft drone, Record r, string reason)
+    {
+        if (!CanRecoverPending(drone, r)) return false;
+        Pilot pilot = drone.pilots[0];
+        PilotBaseState? previous = r.state;
+        if (!SwitchFreshNativeIfSafe(drone, "recovery_" + reason))
+        {
+            // Native handoff helper tracks only its exact requested state when assignment preceded a throw.
+            // Otherwise retain the prior exact state; never adopt a re-entrant unrelated transition.
+            r.recoveryPending = r.state == previous && pilot.currentState == previous || r.recoveryPending && r.state != null && pilot.currentState == r.state;
+            return false;
+        }
+        CancelOnly(previous!);
+        r.state = null;
+        r.recoveryPending = false;
+        if (r.nativeLandingCleanupPending && !CompleteNativeLandingCleanup(drone, r, "rtb_recovery"))
+            return false; // Switch responsibility is complete; only cleanup remains for a later pass.
+        if (r.returningToBase) { r.returningToBase = false; r.lastRtbPilotState = null; }
+        Disarm(drone);
+        separation.Remove(drone);
+        return true;
     }
     private void ObserveRtbPilotState(Aircraft drone, Record r)
     {
@@ -1572,24 +1694,17 @@ internal sealed class WingmanAiManager
                     (r.lastRtbPilotState ?? "none") + " to=" + current);
                 r.lastRtbPilotState = current;
             }
-            // Landing may pass through taxi/completion states.  Only a player takeover or native combat proves
-            // that landing released ownership; other native states remain RTB-owned and are merely observed.
-            if ((context.HasPlayerAssociation(drone) || state is AIPilotCombatModes) && !drone.HasEjected() &&
-                !drone.disabled && drone.unitState != Unit.UnitState.Abandoned && drone.unitState != Unit.UnitState.Returned)
-            {
-                ReleaseNativeLandingUsage(drone, drone.pilots[0].AILandingState, "rtb_native_exit");
-                r.returningToBase = false;
-                r.lastRtbPilotState = null;
-                log("state=rtb_native_exit pid=" + Pid(drone) + " current=" + current);
-            }
+            if (!r.nativeLandingCleanupPending && (context.HasPlayerAssociation(drone) || state is AIPilotCombatModes) &&
+                !ReferenceEquals(state, drone.pilots[0].AILandingState))
+                r.nativeLandingCleanupPending = true;
+            if (r.nativeLandingCleanupPending)
+                CompleteNativeLandingCleanup(drone, r, "rtb_observed");
         }
-        catch
-        {
-        }
+        catch { }
     }
     internal void ResumeDesired(Aircraft d, PilotBaseState caller, string reason)
     {
-        if (!records.TryGetValue(d, out Record r) || r.returningToBase || r.state != caller)
+        if (!records.TryGetValue(d, out Record r) || r.recoveryPending || r.returningToBase || r.nativeLandingCleanupPending || r.state != caller)
             return;
         if (r.mission == WingmanMission.Cap && r.capTarget == null)
             CombatLog(d, "cap_resume_patrol");
@@ -1620,24 +1735,29 @@ internal sealed class WingmanAiManager
         if (d.pilots == null || d.pilots.Length == 0 || d.pilots[0] == null)
             return false;
         Pilot p = d.pilots[0];
+        PilotBaseState? before = p.currentState;
         PilotBaseState? old = r.state;
-        Exception? switchException = null;
-        try
+        bool success = CombatCommandLogic.TrySwitchState<PilotBaseState>(() => p.currentState!, () => next,
+            requested => p.SwitchState(requested), out PilotBaseState currentAfter,
+            out PilotBaseState requestedState, out bool attempted, out bool switchThrew);
+        if (success)
         {
-            p.SwitchState(next);
+            r.state = next;
+            r.recoveryPending = false;
         }
-        catch (Exception e)
+        else
         {
-            switchException = e;
-            log("state=wingman_switch_exception pid=" + Pid(d) + " requested=" + StateName(next) + " exception=" +
-                e.GetType().Name);
-        }
-        if (p.currentState != next)
+            if (attempted && CombatCommandLogic.ShouldRetainFailedSwitch(ReferenceEquals(currentAfter, requestedState),
+                    old != null, ReferenceEquals(currentAfter, before) && ReferenceEquals(before, old)))
+            {
+                r.state = currentAfter;
+                r.recoveryPending = true;
+                log("state=wingman_switch_partial pid=" + Pid(d) + " requested=" + StateName(next));
+            }
+            if (switchThrew)
+                log("state=wingman_switch_exception pid=" + Pid(d) + " requested=" + StateName(next));
             return false;
-        if (switchException != null)
-            log("state=wingman_switch_exception_installed pid=" + Pid(d) + " requested=" + StateName(next) +
-                " exception=" + switchException.GetType().Name);
-        r.state = next;
+        }
         rejected.Remove(d);
         if (next is FixedWingDroneLaunchClearanceState)
             return true;
@@ -1683,16 +1803,36 @@ internal sealed class WingmanAiManager
         return true;
     }
     // Native landing tracks both a runway reservation and Airbase.ControlledAircraft usage.
-    private void ReleaseNativeLandingUsage(Aircraft drone, AIPilotLandingState landing, string source)
+    private bool CompleteNativeLandingCleanup(Aircraft drone, Record r, string source)
     {
+        if (!TryReleaseNativeLandingUsage(drone, source)) return false;
+        r.nativeLandingCleanupPending = false;
+        r.returningToBase = false;
+        r.lastRtbPilotState = null;
+        return true;
+    }
+    private bool TryReleaseNativeLandingUsage(Aircraft drone, string source)
+    {
+        if (NetworkManagerNuclearOption.i == null || !NetworkManagerNuclearOption.i.Server.Active ||
+            !drone.IsServer || drone.NetworkHQ == null || drone.pilots == null ||
+            drone.pilots.Length == 0 || drone.pilots[0] == null ||
+            ReferenceEquals(drone.pilots[0].currentState, drone.pilots[0].AILandingState))
+            return false;
         try
         {
-            landing.runwayUsage.Runway.DeregisterLanding(drone);
-            landing.runwayUsage.Runway.airbase.RpcRegisterUsage(drone, false, landing.runwayUsage.Runway.index);
+            var usage = drone.pilots[0].AILandingState.runwayUsage;
+            if (usage.Runway == null) return true;
+            Airbase.Runway runway = usage.Runway;
+            Airbase airbase = runway.airbase;
+            if (airbase == null || !airbase.IsServer) return false;
+            runway.DeregisterLanding(drone);
+            airbase.RpcRegisterUsage(drone, false, runway.index);
+            return !runway.GetLandingList().Contains(drone) && !airbase.ControlledAircraft.Contains(drone);
         }
         catch (Exception e)
         {
             log("state=" + source + "_release_exception pid=" + Pid(drone) + " exception=" + e.GetType().Name);
+            return false;
         }
     }
     internal bool PrepareReturningFqForTakeControl(Aircraft drone, out string reason)
@@ -1703,9 +1843,12 @@ internal sealed class WingmanAiManager
             reason = "rtb_in_progress";
             return false;
         }
-        ReleaseNativeLandingUsage(drone, drone.pilots[0].AILandingState, "rtb_takeover");
-        r.returningToBase = false;
-        r.lastRtbPilotState = null;
+        r.nativeLandingCleanupPending = true;
+        if (!CompleteNativeLandingCleanup(drone, r, "rtb_takeover"))
+        {
+            reason = "rtb_cleanup_failed";
+            return false;
+        }
         return true;
     }
     private bool HasEffectiveDefense(Aircraft d, Record r, out FixedWingDroneMissileDefenseState? defense)
@@ -1753,9 +1896,9 @@ internal sealed class WingmanAiManager
     internal void Fault(Aircraft d, PilotBaseState c, string reason) => DetachOrFallback(d, c, "fault_" + reason);
     private void DetachOrFallback(Aircraft d, PilotBaseState c, string reason)
     {
-        if (records.TryGetValue(d, out Record terminal) && terminal.returningToBase)
+        if (records.TryGetValue(d, out Record terminal) && (terminal.returningToBase || terminal.recoveryPending))
             return;
-        if (!records.TryGetValue(d, out Record r) || r.state != c)
+        if (!records.TryGetValue(d, out Record r) || r.recoveryPending || r.state != c)
         {
             CancelOnly(c);
             return;
@@ -1794,7 +1937,7 @@ internal sealed class WingmanAiManager
         reason = "";
         try
         {
-            if (!records.TryGetValue(d, out Record r) || r.returningToBase || r.state != c || d == activeLeader || !d.IsServer ||
+            if (!records.TryGetValue(d, out Record r) || r.recoveryPending || r.returningToBase || r.nativeLandingCleanupPending || r.state != c || d == activeLeader || !d.IsServer ||
                 !d.LocalSim || d.pilots == null || d.pilots.Length == 0 || d.pilots[0] == null ||
                 d.pilots[0].currentState != c || d.pilots[0].pilotType != Pilot.PilotType.Plane ||
                 d.autopilot is not AutopilotPlane)
@@ -1822,6 +1965,8 @@ internal sealed class WingmanAiManager
         bool hasHq = context.TryGetHq(out FactionHQ hq, out _);
         foreach (KeyValuePair<Aircraft, Record> pair in new List<KeyValuePair<Aircraft, Record>>(records))
         {
+            if (pair.Value.recoveryPending || pair.Value.nativeLandingCleanupPending)
+                continue;
             if (pair.Value.mission == WingmanMission.Cap)
             {
                 Record cap = pair.Value;
@@ -1873,7 +2018,7 @@ internal sealed class WingmanAiManager
         }
         return StrikeMissionLogic.ResolveWeaponStatus(compatible, ammo, waiting);
     }
-    private bool DefenderOwns(Aircraft d, Record r) => !r.returningToBase && d != null && d != activeLeader &&
+    private bool DefenderOwns(Aircraft d, Record r) => !r.recoveryPending && !r.returningToBase && d != null && d != activeLeader &&
                                                        (r.state is FixedWingDroneFollowState ||
                                                         r.state is FixedWingDroneLoiterState) &&
                                                        CombatSupport.ValidAircraft(d) && d.IsServer && d.LocalSim &&
@@ -1883,15 +2028,15 @@ internal sealed class WingmanAiManager
                                                        && d.autopilot is AutopilotPlane
                                                        && d.pilots[0].currentState == r.state;
     internal bool CombatOwns(Aircraft d, FixedWingDroneAirToAirAttackState state) =>
-        records.TryGetValue(d, out Record r) && !r.returningToBase && r.state == state &&
+        records.TryGetValue(d, out Record r) && !r.recoveryPending && !r.returningToBase && r.state == state &&
         ((r.mission == WingmanMission.AirToAir && r.airToAirTarget != null && state.Target == r.airToAirTarget) ||
          (r.mission == WingmanMission.Cap && r.capTarget != null && state.Target == r.capTarget)) &&
                                                                             context.CombatEnabled && CombatSupport.Runtime(d, state) && !context.HasPlayerAssociation(d);
     internal bool TacticalOwns(Aircraft d, PilotBaseState state) =>
-        records.TryGetValue(d, out Record r) && !r.returningToBase && r.state == state && CombatSupport.Runtime(d, state) &&
+        records.TryGetValue(d, out Record r) && !r.recoveryPending && !r.returningToBase && r.state == state && CombatSupport.Runtime(d, state) &&
         !context.HasPlayerAssociation(d);
     internal bool MissionOwns(Aircraft d, PilotBaseState state, WingmanMission mission, Unit target) =>
-        records.TryGetValue(d, out Record r) && !r.returningToBase && r.state == state && r.mission == mission &&
+        records.TryGetValue(d, out Record r) && !r.recoveryPending && !r.returningToBase && r.state == state && r.mission == mission &&
         (mission == WingmanMission.AntiShip ? r.antiShipTarget == target :
          mission == WingmanMission.Sead ? r.seadTarget == target : false) &&
         context.CombatEnabled && CombatSupport.Runtime(d, state) &&
@@ -2079,10 +2224,13 @@ internal sealed class WingmanAiManager
         internal readonly float loiterPhase;
         internal readonly FormationSlot slot;
         internal readonly HashSet<PersistentID> attemptedDefenseThreats = new HashSet<PersistentID>();
+        // Healthy installed state, or exact current state carrying an incomplete switch/handoff responsibility.
         internal PilotBaseState? state;
+        internal bool recoveryPending;
         internal bool followFallbackActive;
         internal float followFallbackUntil;
         internal bool returningToBase;
+        internal bool nativeLandingCleanupPending;
         internal string? lastRtbPilotState;
         internal bool initialStateReported;
         internal bool launchClearanceActive;
@@ -2172,7 +2320,7 @@ internal sealed class WingmanAiManager
     internal bool TryGetAntiShipRadarThreat(Aircraft drone, out Missile threat, out float tti)
     {
         threat = null!; tti = float.PositiveInfinity;
-        if (!records.TryGetValue(drone, out Record r) || r.mission != WingmanMission.AntiShip ||
+        if (!records.TryGetValue(drone, out Record r) || r.recoveryPending || r.mission != WingmanMission.AntiShip ||
             r.antiShipRadarThreat == null || !ActiveDefenseThreat(drone, r.antiShipRadarThreat) ||
             !TryDefenseTti(drone, r.antiShipRadarThreat, out tti) || !float.IsFinite(tti) || tti < 0f)
             return false;
@@ -2187,7 +2335,7 @@ internal sealed class WingmanAiManager
         {
             Aircraft d = pair.Key;
             Record r = pair.Value;
-            if (r.returningToBase || r.launchClearanceActive || d == null)
+            if (r.recoveryPending || r.returningToBase || r.nativeLandingCleanupPending || r.launchClearanceActive || d == null)
                 continue;
             FixedWingDroneMissileDefenseState? current = r.state as FixedWingDroneMissileDefenseState;
             bool currentActive = current != null && ActiveDefenseThreat(d, current.Threat);

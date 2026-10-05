@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace LoyalWingman;
@@ -53,6 +54,38 @@ internal static class CombatCommandLogic
             }
         return true;
     }
+
+    // A native SwitchState call is acknowledged only when it returned normally and installed its requested state.
+    // Shared switch runner used by manager handoffs and fault-injected lifecycle tests.
+    internal static bool TrySwitchState<T>(Func<T> current, Func<T> createRequested, Action<T> switchState,
+                                           out T currentAfter, out T requested, out bool attempted, out bool threw)
+        where T : class
+    {
+        threw = false;
+        attempted = false;
+        requested = null!;
+        currentAfter = null!;
+        try
+        {
+            requested = createRequested();
+            if (requested == null) return false;
+            attempted = true;
+            switchState(requested);
+        }
+        catch { threw = true; }
+        currentAfter = current();
+        return requested != null && IsStateSwitchInstalled(threw, attempted && ReferenceEquals(currentAfter, requested));
+    }
+
+    internal static bool IsStateSwitchInstalled(bool threw, bool pointerMatches) => !threw && pointerMatches;
+
+    // On a failed SwitchState, only the requested assignment or exact prior owned state is attributable.
+    internal static bool ShouldRetainFailedSwitch(bool requestedIsCurrent, bool priorWasOwned, bool priorIsCurrent) =>
+        requestedIsCurrent || priorWasOwned && priorIsCurrent;
+
+    internal static bool CanRecoverPending(bool hasTrackedState, bool exactCurrent, bool authoritative,
+                                           bool playerAssociated, bool terminal) =>
+        hasTrackedState && exactCurrent && authoritative && !playerAssociated && !terminal;
 
     internal static bool IsBetterOpportunity(float candidate, int candidateIndex, float best, int bestIndex)
     {
