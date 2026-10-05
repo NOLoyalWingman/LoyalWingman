@@ -837,9 +837,10 @@ internal sealed class WingmanAiManager
         bool liveCustom = r != null && InstalledStateOwns(drone, r);
         if (liveCustom)
         {
-            bool terminalOrPlayer = context.HasPlayerAssociation(drone) || drone.disabled || drone.HasEjected() ||
-                                    drone.unitState == Unit.UnitState.Abandoned || drone.unitState == Unit.UnitState.Returned;
-            if (terminalOrPlayer)
+            bool detachOnly = context.HasPlayerAssociation(drone) || !drone.IsServer || !drone.LocalSim ||
+                              drone.disabled || drone.HasEjected() || drone.unitState == Unit.UnitState.Abandoned ||
+                              drone.unitState == Unit.UnitState.Returned;
+            if (detachOnly)
             {
                 // We no longer own the aircraft's lifecycle: detach bookkeeping without changing its pilot state.
                 CancelOnly(r!.state!);
@@ -1608,7 +1609,7 @@ internal sealed class WingmanAiManager
         return true;
     }
     private static bool InstalledStateOwns(Aircraft d, Record r) =>
-        r.state != null && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
+        d != null && r.state != null && d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null &&
         d.pilots[0].currentState == r.state;
     private static string CurrentPilotStateName(Aircraft d) =>
         d.pilots != null && d.pilots.Length > 0 && d.pilots[0] != null ? StateName(d.pilots[0].currentState) : "missing";
